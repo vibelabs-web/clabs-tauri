@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; case \"$FILE\" in *.py) ruff format \"$FILE\" 2>/dev/null || black \"$FILE\" 2>/dev/null || true ;; *.ts|*.tsx|*.js|*.jsx|*.json) npx prettier --write \"$FILE\" 2>/dev/null || true ;; *.go) gofmt -w \"$FILE\" 2>/dev/null || true ;; *.rs) rustfmt \"$FILE\" 2>/dev/null || true ;; esac'",
+            "timeout": 30,
+            "statusMessage": "Formatting code..."
+          }
+        ]
+      }
+    ]
+  }
+}

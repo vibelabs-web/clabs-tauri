@@ -1,0 +1,42 @@
+# Rails 8 SQLite configuration with WAL mode
+# SQLite is now production-ready for most workloads
+
+default: &default
+  adapter: sqlite3
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  timeout: 5000
+  # Rails 8 default SQLite PRAGMAs for optimal performance
+  pragmas:
+    journal_mode: WAL
+    synchronous: NORMAL
+    mmap_size: 134217728
+    cache_size: 2000
+    busy_timeout: 5000
+
+development:
+  <<: *default
+  database: storage/development.sqlite3
+
+test:
+  <<: *default
+  database: storage/test.sqlite3
+
+production:
+  primary:
+    <<: *default
+    database: storage/production.sqlite3
+  # Solid Queue database (Rails 8)
+  queue:
+    <<: *default
+    database: storage/production_queue.sqlite3
+    migrations_paths: db/queue_migrate
+  # Solid Cache database (Rails 8)
+  cache:
+    <<: *default
+    database: storage/production_cache.sqlite3
+    migrations_paths: db/cache_migrate
+  # Solid Cable database (Rails 8)
+  cable:
+    <<: *default
+    database: storage/production_cable.sqlite3
+    migrations_paths: db/cable_migrate

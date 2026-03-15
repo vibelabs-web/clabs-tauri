@@ -1,0 +1,453 @@
+/**
+ * CSS 변수 정의
+ * Design System 색상, 크기, 애니메이션 등 전역 토큰
+ */
+
+/* ===== 기본 테마 (Default Dark) ===== */
+:root,
+[data-theme="default-dark"] {
+  /* 배경 색상 */
+  --color-bg-primary: #1a1a1a;
+  --color-bg-secondary: #242424;
+  --color-bg-tertiary: #2d2d2d;
+  --color-bg-hover: #353535;
+
+  /* 텍스트 색상 */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e0e0e0;
+  --color-text-muted: #a0a0a0;
+  --color-text-disabled: #666666;
+
+  /* 액센트 색상 */
+  --color-accent: #00ff88;
+  --color-accent-hover: #00cc6a;
+  --color-accent-light: rgba(0, 255, 136, 0.1);
+  --color-accent-medium: rgba(0, 255, 136, 0.3);
+
+  /* 상태 색상 */
+  --color-status-success: #00ff88;
+  --color-status-warning: #ffcc00;
+  --color-status-error: #ff4444;
+  --color-status-info: #00aaff;
+
+  /* 사용량 스펙트럼 색상 */
+  --color-usage-green: #00ff88;
+  --color-usage-yellow: #ffcc00;
+  --color-usage-orange: #ff8800;
+  --color-usage-red: #ff4444;
+
+  /* 경계선 색상 */
+  --color-border-default: #2d2d2d;
+  --color-border-hover: rgba(0, 255, 136, 0.3);
+  --color-border-focus: rgba(0, 255, 136, 0.5);
+
+  /* 터미널 색상 */
+  --terminal-bg: #0a0a0a;
+  --terminal-fg: #e0e0e0;
+  --terminal-cursor: #00ff88;
+}
+
+/* ===== Gruvbox Dark Hard ===== */
+[data-theme="gruvbox-dark"] {
+  --color-bg-primary: #1d2021;
+  --color-bg-secondary: #282828;
+  --color-bg-tertiary: #3c3836;
+  --color-bg-hover: #504945;
+
+  --color-text-primary: #ebdbb2;
+  --color-text-secondary: #d5c4a1;
+  --color-text-muted: #928374;
+  --color-text-disabled: #665c54;
+
+  --color-accent: #b8bb26;
+  --color-accent-hover: #98971a;
+  --color-accent-light: rgba(184, 187, 38, 0.15);
+  --color-accent-medium: rgba(184, 187, 38, 0.3);
+
+  --color-status-success: #b8bb26;
+  --color-status-warning: #fabd2f;
+  --color-status-error: #fb4934;
+  --color-status-info: #83a598;
+
+  --color-usage-green: #b8bb26;
+  --color-usage-yellow: #fabd2f;
+  --color-usage-orange: #fe8019;
+  --color-usage-red: #fb4934;
+
+  --color-border-default: #3c3836;
+  --color-border-hover: rgba(184, 187, 38, 0.4);
+  --color-border-focus: rgba(184, 187, 38, 0.6);
+
+  --terminal-bg: #1d2021;
+  --terminal-fg: #ebdbb2;
+  --terminal-cursor: #b8bb26;
+}
+
+/* ===== Gruvbox Light Hard ===== */
+[data-theme="gruvbox-light"] {
+  --color-bg-primary: #f9f5d7;
+  --color-bg-secondary: #fbf1c7;
+  --color-bg-tertiary: #ebdbb2;
+  --color-bg-hover: #d5c4a1;
+
+  --color-text-primary: #3c3836;
+  --color-text-secondary: #504945;
+  --color-text-muted: #665c54;
+  --color-text-disabled: #928374;
+
+  --color-accent: #79740e;
+  --color-accent-hover: #98971a;
+  --color-accent-light: rgba(121, 116, 14, 0.15);
+  --color-accent-medium: rgba(121, 116, 14, 0.3);
+
+  --color-status-success: #79740e;
+  --color-status-warning: #b57614;
+  --color-status-error: #9d0006;
+  --color-status-info: #076678;
+
+  --color-usage-green: #79740e;
+  --color-usage-yellow: #b57614;
+  --color-usage-orange: #af3a03;
+  --color-usage-red: #9d0006;
+
+  --color-border-default: #d5c4a1;
+  --color-border-hover: rgba(121, 116, 14, 0.4);
+  --color-border-focus: rgba(121, 116, 14, 0.6);
+
+  --terminal-bg: #f9f5d7;
+  --terminal-fg: #3c3836;
+  --terminal-cursor: #79740e;
+}
+
+/* ===== Dracula ===== */
+[data-theme="dracula"] {
+  --color-bg-primary: #282a36;
+  --color-bg-secondary: #21222c;
+  --color-bg-tertiary: #44475a;
+  --color-bg-hover: #6272a4;
+
+  --color-text-primary: #f8f8f2;
+  --color-text-secondary: #f8f8f2;
+  --color-text-muted: #6272a4;
+  --color-text-disabled: #44475a;
+
+  --color-accent: #bd93f9;
+  --color-accent-hover: #ff79c6;
+  --color-accent-light: rgba(189, 147, 249, 0.15);
+  --color-accent-medium: rgba(189, 147, 249, 0.3);
+
+  --color-status-success: #50fa7b;
+  --color-status-warning: #f1fa8c;
+  --color-status-error: #ff5555;
+  --color-status-info: #8be9fd;
+
+  --color-usage-green: #50fa7b;
+  --color-usage-yellow: #f1fa8c;
+  --color-usage-orange: #ffb86c;
+  --color-usage-red: #ff5555;
+
+  --color-border-default: #44475a;
+  --color-border-hover: rgba(189, 147, 249, 0.4);
+  --color-border-focus: rgba(189, 147, 249, 0.6);
+
+  --terminal-bg: #282a36;
+  --terminal-fg: #f8f8f2;
+  --terminal-cursor: #f8f8f2;
+}
+
+/* ===== One Dark ===== */
+[data-theme="one-dark"] {
+  --color-bg-primary: #21252b;
+  --color-bg-secondary: #282c34;
+  --color-bg-tertiary: #2c313a;
+  --color-bg-hover: #3e4451;
+
+  --color-text-primary: #abb2bf;
+  --color-text-secondary: #9da5b4;
+  --color-text-muted: #5c6370;
+  --color-text-disabled: #4b5263;
+
+  --color-accent: #61afef;
+  --color-accent-hover: #528bcc;
+  --color-accent-light: rgba(97, 175, 239, 0.15);
+  --color-accent-medium: rgba(97, 175, 239, 0.3);
+
+  --color-status-success: #98c379;
+  --color-status-warning: #e5c07b;
+  --color-status-error: #e06c75;
+  --color-status-info: #61afef;
+
+  --color-usage-green: #98c379;
+  --color-usage-yellow: #e5c07b;
+  --color-usage-orange: #d19a66;
+  --color-usage-red: #e06c75;
+
+  --color-border-default: #3e4451;
+  --color-border-hover: rgba(97, 175, 239, 0.4);
+  --color-border-focus: rgba(97, 175, 239, 0.6);
+
+  --terminal-bg: #21252b;
+  --terminal-fg: #abb2bf;
+  --terminal-cursor: #528bff;
+}
+
+/* ===== Nord ===== */
+[data-theme="nord"] {
+  --color-bg-primary: #2e3440;
+  --color-bg-secondary: #3b4252;
+  --color-bg-tertiary: #434c5e;
+  --color-bg-hover: #4c566a;
+
+  --color-text-primary: #eceff4;
+  --color-text-secondary: #e5e9f0;
+  --color-text-muted: #d8dee9;
+  --color-text-disabled: #4c566a;
+
+  --color-accent: #88c0d0;
+  --color-accent-hover: #8fbcbb;
+  --color-accent-light: rgba(136, 192, 208, 0.15);
+  --color-accent-medium: rgba(136, 192, 208, 0.3);
+
+  --color-status-success: #a3be8c;
+  --color-status-warning: #ebcb8b;
+  --color-status-error: #bf616a;
+  --color-status-info: #81a1c1;
+
+  --color-usage-green: #a3be8c;
+  --color-usage-yellow: #ebcb8b;
+  --color-usage-orange: #d08770;
+  --color-usage-red: #bf616a;
+
+  --color-border-default: #4c566a;
+  --color-border-hover: rgba(136, 192, 208, 0.4);
+  --color-border-focus: rgba(136, 192, 208, 0.6);
+
+  --terminal-bg: #2e3440;
+  --terminal-fg: #d8dee9;
+  --terminal-cursor: #d8dee9;
+}
+
+/* ===== Solarized Dark ===== */
+[data-theme="solarized-dark"] {
+  --color-bg-primary: #002b36;
+  --color-bg-secondary: #073642;
+  --color-bg-tertiary: #094552;
+  --color-bg-hover: #0b5265;
+
+  --color-text-primary: #fdf6e3;
+  --color-text-secondary: #eee8d5;
+  --color-text-muted: #839496;
+  --color-text-disabled: #586e75;
+
+  --color-accent: #268bd2;
+  --color-accent-hover: #2aa198;
+  --color-accent-light: rgba(38, 139, 210, 0.15);
+  --color-accent-medium: rgba(38, 139, 210, 0.3);
+
+  --color-status-success: #859900;
+  --color-status-warning: #b58900;
+  --color-status-error: #dc322f;
+  --color-status-info: #268bd2;
+
+  --color-usage-green: #859900;
+  --color-usage-yellow: #b58900;
+  --color-usage-orange: #cb4b16;
+  --color-usage-red: #dc322f;
+
+  --color-border-default: #094552;
+  --color-border-hover: rgba(38, 139, 210, 0.4);
+  --color-border-focus: rgba(38, 139, 210, 0.6);
+
+  --terminal-bg: #002b36;
+  --terminal-fg: #839496;
+  --terminal-cursor: #839496;
+}
+
+/* ===== Solarized Light ===== */
+[data-theme="solarized-light"] {
+  --color-bg-primary: #fdf6e3;
+  --color-bg-secondary: #eee8d5;
+  --color-bg-tertiary: #ddd6c6;
+  --color-bg-hover: #d0c9b7;
+
+  --color-text-primary: #073642;
+  --color-text-secondary: #586e75;
+  --color-text-muted: #839496;
+  --color-text-disabled: #93a1a1;
+
+  --color-accent: #268bd2;
+  --color-accent-hover: #2aa198;
+  --color-accent-light: rgba(38, 139, 210, 0.15);
+  --color-accent-medium: rgba(38, 139, 210, 0.3);
+
+  --color-status-success: #859900;
+  --color-status-warning: #b58900;
+  --color-status-error: #dc322f;
+  --color-status-info: #268bd2;
+
+  --color-usage-green: #859900;
+  --color-usage-yellow: #b58900;
+  --color-usage-orange: #cb4b16;
+  --color-usage-red: #dc322f;
+
+  --color-border-default: #ddd6c6;
+  --color-border-hover: rgba(38, 139, 210, 0.4);
+  --color-border-focus: rgba(38, 139, 210, 0.6);
+
+  --terminal-bg: #fdf6e3;
+  --terminal-fg: #657b83;
+  --terminal-cursor: #657b83;
+}
+
+/* ===== Tokyo Night ===== */
+[data-theme="tokyo-night"] {
+  --color-bg-primary: #1a1b26;
+  --color-bg-secondary: #16161e;
+  --color-bg-tertiary: #24283b;
+  --color-bg-hover: #292e42;
+
+  --color-text-primary: #c0caf5;
+  --color-text-secondary: #a9b1d6;
+  --color-text-muted: #565f89;
+  --color-text-disabled: #414868;
+
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #bb9af7;
+  --color-accent-light: rgba(122, 162, 247, 0.15);
+  --color-accent-medium: rgba(122, 162, 247, 0.3);
+
+  --color-status-success: #9ece6a;
+  --color-status-warning: #e0af68;
+  --color-status-error: #f7768e;
+  --color-status-info: #7dcfff;
+
+  --color-usage-green: #9ece6a;
+  --color-usage-yellow: #e0af68;
+  --color-usage-orange: #ff9e64;
+  --color-usage-red: #f7768e;
+
+  --color-border-default: #24283b;
+  --color-border-hover: rgba(122, 162, 247, 0.4);
+  --color-border-focus: rgba(122, 162, 247, 0.6);
+
+  --terminal-bg: #1a1b26;
+  --terminal-fg: #a9b1d6;
+  --terminal-cursor: #c0caf5;
+}
+
+/* ===== 비-색상 토큰 (모든 테마 공통) ===== */
+:root {
+  /* 간격 토큰 */
+  --spacing-xs: 0.25rem;    /* 4px */
+  --spacing-sm: 0.5rem;     /* 8px */
+  --spacing-md: 1rem;       /* 16px */
+  --spacing-lg: 1.5rem;     /* 24px */
+  --spacing-xl: 2rem;       /* 32px */
+  --spacing-2xl: 3rem;      /* 48px */
+
+  /* 타이포그래피 */
+  --font-family-base: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  --font-size-xs: 0.75rem;   /* 12px */
+  --font-size-sm: 0.875rem;  /* 14px */
+  --font-size-base: 1rem;    /* 16px */
+  --font-size-lg: 1.125rem;  /* 18px */
+  --font-size-xl: 1.25rem;   /* 20px */
+  --font-size-2xl: 1.5rem;   /* 24px */
+  --font-size-3xl: 1.875rem; /* 30px */
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* 레이아웃 */
+  --border-radius-sm: 0.25rem;  /* 4px */
+  --border-radius-md: 0.5rem;   /* 8px */
+  --border-radius-lg: 0.75rem;  /* 12px */
+  --border-radius-xl: 1rem;     /* 16px */
+  --border-radius-full: 9999px;
+
+  --border-width-thin: 1px;
+  --border-width-medium: 2px;
+  --border-width-thick: 4px;
+
+  /* 그림자 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+
+  /* Z-Index */
+  --z-index-base: 0;
+  --z-index-dropdown: 10;
+  --z-index-sticky: 20;
+  --z-index-modal-backdrop: 40;
+  --z-index-modal: 50;
+  --z-index-popover: 60;
+  --z-index-tooltip: 70;
+  --z-index-notification: 80;
+
+  /* 애니메이션 */
+  --duration-instant: 100ms;
+  --duration-fast: 200ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+
+  --easing-linear: linear;
+  --easing-ease: ease;
+  --easing-ease-in: ease-in;
+  --easing-ease-out: ease-out;
+  --easing-ease-in-out: ease-in-out;
+
+  /* 컴포넌트별 크기 */
+  --titlebar-height: 40px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 60px;
+  --input-height-sm: 32px;
+  --input-height-md: 40px;
+  --input-height-lg: 48px;
+  --button-height-sm: 28px;
+  --button-height-md: 36px;
+  --button-height-lg: 44px;
+
+  /* 스크롤바 */
+  --scrollbar-width: 8px;
+  --scrollbar-track-color: var(--color-bg-primary);
+  --scrollbar-thumb-color: #444444;
+  --scrollbar-thumb-hover-color: #555555;
+
+  /* 유리 모피즘 */
+  --glass-bg: rgba(36, 36, 36, 0.7);
+  --glass-blur: blur(10px);
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* 그라데이션 */
+  --gradient-primary: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  --gradient-success: linear-gradient(135deg, var(--color-status-success) 0%, var(--color-status-success) 100%);
+  --gradient-warning: linear-gradient(135deg, var(--color-status-warning) 0%, var(--color-status-warning) 100%);
+  --gradient-error: linear-gradient(135deg, var(--color-status-error) 0%, var(--color-status-error) 100%);
+
+  /* Shimmer 로딩 효과 */
+  --shimmer-gradient: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+/* ===== 모션 감소 설정 ===== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+    --duration-slow: 0ms;
+  }
+}

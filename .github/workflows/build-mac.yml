@@ -1,0 +1,109 @@
+# @TASK P4-T3 - macOS 빌드 및 코드 서명 자동화
+# @SPEC Phase 4: 패키징 및 배포 - CI/CD
+
+name: Build macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Import Developer ID Certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          # Base64 인증서 디코딩
+          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+
+          # 임시 Keychain 생성
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+
+          # 인증서 import
+          security import certificate.p12 \
+            -k build.keychain \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/productsign
+
+          # 코드서명 허용
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k actions build.keychain
+
+          # 인증서 확인
+          security find-identity -v -p codesigning
+
+      - name: Build Main Process
+        run: npm run build:main
+
+      - name: Build Renderer Process
+        run: npm run build:renderer
+
+      - name: Build & Sign macOS App
+        env:
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build:mac
+
+      - name: Verify Code Signature
+        run: |
+          # DMG 파일 찾기
+          DMG_FILE=$(find release -name "*.dmg" | head -n 1)
+
+          # 서명 확인
+          codesign --verify --deep --strict --verbose=2 "$DMG_FILE"
+
+          # Gatekeeper 확인
+          spctl --assess --type execute --verbose=4 "$DMG_FILE" || true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clabs-mac-${{ github.ref_name }}
+          path: |
+            release/*.dmg
+            release/*.pkg
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*.dmg
+            release/*.pkg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Keychain 삭제
+          security delete-keychain build.keychain || true
+
+          # 인증서 파일 삭제
+          rm -f certificate.p12

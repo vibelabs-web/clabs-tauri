@@ -1,0 +1,62 @@
+{
+  "version": "1.0",
+  "analyzed_at": "2026-02-02T18:00:00Z",
+  "project": {
+    "name": "clabs",
+    "fullName": "Claude Labs Skillpack GUI - AI 개발 파트너",
+    "version": "1.0.0",
+    "appId": "com.claudelabs.clabs",
+    "license": "MIT",
+    "type": "electron-desktop-application"
+  },
+  "tech_stack": {
+    "desktop_framework": "Electron ^28.0.0",
+    "main_process": "TypeScript + Node.js (ES2022)",
+    "renderer_process": "React ^19.0.0 + TypeScript",
+    "styling": "Tailwind CSS ^3.4.0",
+    "state_management": "Zustand ^4.4.7 + electron-store ^8.1.0",
+    "terminal_emulation": "xterm.js ^5.3.0",
+    "process_management": "node-pty ^1.0.0",
+    "build_tool": "Vite ^5.0.10",
+    "test_framework": "Vitest ^1.1.0 + Playwright ^1.40.0",
+    "packager": "electron-builder ^24.9.1"
+  },
+  "structure": {
+    "type": "electron-monolithic",
+    "pattern": "3-tier (Main/IPC Bridge/Renderer)",
+    "directories": {
+      "main_process": "src/main/",
+      "renderer_process": "src/renderer/",
+      "shared": "src/shared/",
+      "tests": "tests/",
+      "build": "build/"
+    }
+  },
+  "components": {
+    "pages": 7,
+    "layout_components": 4,
+    "terminal_components": 2,
+    "zustand_stores": 5,
+    "electron_stores": 3
+  },
+  "statistics": {
+    "total_ts_tsx_files": 41,
+    "total_lines_of_code": 6402,
+    "test_files": 8,
+    "main_process_services": 7,
+    "largest_file": "session-watcher.ts (19.9KB)"
+  },
+  "build_targets": [
+    "macOS (DMG + PKG)",
+    "Windows (NSIS + Portable)",
+    "Linux (AppImage + DEB)"
+  ],
+  "key_services": [
+    "PTY Manager (셸 프로세스)",
+    "Skill Scanner (~/.claude/skills)",
+    "Session Watcher (~/.claude/sessions)",
+    "Update Manager (GitHub Release)",
+    "Usage API (사용량 추적)",
+    "IPC Handlers (양방향 통신)"
+  ]
+}

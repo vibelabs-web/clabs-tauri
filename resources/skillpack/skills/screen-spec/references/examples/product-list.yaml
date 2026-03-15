@@ -1,0 +1,122 @@
+# 상품 목록 화면 명세 (v2.0)
+# 이 파일은 /screen-spec 스킬의 출력 예시입니다.
+# 목표: ~95줄 (기존 406줄에서 간소화)
+
+version: "2.0"
+
+screen:
+  name: 상품 목록
+  route: /products
+  layout: sidebar-main
+  auth: false
+
+data_requirements:
+  - resource: products
+    needs: [id, name, price, thumbnail, description]
+    filters:
+      category: "?category"
+      min_price: "?min_price"
+      max_price: "?max_price"
+      sort: "?sort"
+      page: "?page"
+
+  - resource: categories
+    needs: [id, name, slug, product_count]
+
+  - resource: wishlist
+    needs: [product_id]
+    auth_required: true
+
+components:
+  - id: category_sidebar
+    type: navigation
+    position: sidebar
+    function: 카테고리 트리를 표시하고 선택된 카테고리로 상품 필터링
+    data_source:
+      resource: categories
+    events:
+      - on: click:category
+        do: URL 쿼리 파라미터 업데이트, 상품 목록 필터링
+      - on: click:clear
+        do: 카테고리 필터 해제, 전체 상품 표시
+
+  - id: price_filter
+    type: form
+    position: sidebar
+    function: 가격 범위로 상품 필터링
+    events:
+      - on: change:slider
+        do: 가격 범위 설정
+      - on: click:apply
+        do: URL 쿼리 업데이트, 상품 목록 필터링
+
+  - id: sort_select
+    type: form
+    position: main
+    function: 상품 정렬 기준 선택
+    events:
+      - on: change:select
+        do: URL 쿼리 업데이트, 상품 목록 재정렬
+
+  - id: product_grid
+    type: grid
+    position: main
+    function: 상품 카드를 반응형 그리드로 표시
+    data_source:
+      resource: products
+    events:
+      - on: scroll:end
+        do: 다음 페이지 로드 (무한 스크롤)
+
+  - id: product_card
+    type: card
+    position: main
+    function: 개별 상품의 이미지, 이름, 가격, 찜하기 버튼 표시
+    data_source:
+      resource: products
+    events:
+      - on: click:card
+        do: 상품 상세 페이지로 이동
+      - on: click:wishlist
+        do: 로그인 체크 후 위시리스트 토글
+
+connections:
+  navigations:
+    - from: product_card
+      to: /products/:id
+
+  shared_components:
+    - header
+    - footer
+    - login_modal
+
+  external:
+    - auth
+
+tests:
+  - name: 초기 로드
+    when: 페이지 접속
+    then:
+      - 카테고리 목록이 사이드바에 표시됨
+      - 첫 12개 상품이 그리드에 표시됨
+
+  - name: 카테고리 필터링
+    when: 전자제품 카테고리 클릭
+    then:
+      - URL이 ?category=electronics로 변경됨
+      - 해당 카테고리 상품만 표시됨
+
+  - name: 상품 상세 이동
+    when: 상품 카드 클릭
+    then:
+      - /products/:id 페이지로 이동
+
+  - name: 찜하기 (비로그인)
+    when: 비로그인 상태에서 찜하기 버튼 클릭
+    then:
+      - 로그인 모달 표시
+
+  - name: 무한 스크롤
+    when: 스크롤 끝 도달
+    then:
+      - 다음 12개 상품 추가 로드

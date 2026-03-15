@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+src-tauri/target/
+src-tauri/gen/
+*.dmg
+*.app
+.env
+.DS_Store
+playwright-report/
+test-results.json
+junit-results.xml
