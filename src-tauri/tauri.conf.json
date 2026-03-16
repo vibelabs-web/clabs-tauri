@@ -19,7 +19,8 @@
         "minHeight": 600,
         "decorations": false,
         "transparent": false,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

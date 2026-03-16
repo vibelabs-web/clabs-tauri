@@ -1,7 +1,7 @@
 // @TASK P2-S3-T1 - SkillPanel 컴포넌트 (다크 테마 + 그룹화 + MCP)
 // @SPEC Worktree Phase 2 - 워크플로우, 추천, 스킬 버튼 표시 패널
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { SkillInfo, MCPServer } from '@shared/types';
 import {
   BUILTIN_COMMANDS,
@@ -411,6 +411,16 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
     }
   };
 
+  // 외부 URL 열기
+  const openUrl = useCallback(async (url: string) => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(url);
+    } catch {
+      window.open(url, '_blank');
+    }
+  }, []);
+
   // 카테고리별 스킬 수 계산
   const totalSkills = Object.values(categorizedSkills).reduce(
     (sum, skills) => sum + skills.length,
@@ -486,7 +496,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
           title="빠른 실행"
           icon={<QuickActionIcon />}
           count={QUICK_ACTIONS.length}
-          defaultExpanded={true}
+          defaultExpanded={false}
         >
           {Object.entries(groupedActions).map(([cat, actions]) => (
             <CollapsibleSection
@@ -613,7 +623,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
             title="스킬"
             icon={<SkillIcon />}
             count={totalSkills}
-            defaultExpanded={true}
+            defaultExpanded={false}
           >
             {totalSkills === 0 ? (
               <p className="text-xs text-text-muted italic px-2">
@@ -648,7 +658,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
             title="MCP 서버"
             icon={<MCPIcon />}
             count={mcpServers.length}
-            defaultExpanded={true}
+            defaultExpanded={false}
           >
             {mcpServers.length === 0 ? (
               <p className="text-xs text-text-muted italic px-2">
@@ -662,6 +672,41 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({
           </CollapsibleSection>
         </section>
       )}
+
+      {/* 하단 배너 */}
+      <div className="mt-6 pt-4 border-t border-border-default space-y-2">
+        <button
+          onMouseDown={() => openUrl('https://vibelabs.kr/skills/new')}
+          className="block w-full text-left px-3 py-2.5 bg-gradient-to-r from-accent/15 to-emerald-500/15 border border-accent/25 rounded-lg hover:from-accent/25 hover:to-emerald-500/25 hover:border-accent/40 transition-all cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span className="text-xs font-semibold text-accent">AI 스킬 마켓</span>
+          </div>
+          <p className="text-[10px] text-text-muted mt-1 ml-6">
+            나만의 Claude 스킬을 만들고 공유하세요
+          </p>
+        </button>
+        <button
+          onMouseDown={() => openUrl('https://vibelabs.kr/videogen/purchase/new')}
+          className="block w-full text-left px-3 py-2.5 bg-gradient-to-r from-violet-500/15 to-pink-500/15 border border-violet-500/25 rounded-lg hover:from-violet-500/25 hover:to-pink-500/25 hover:border-violet-500/40 transition-all cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-violet-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span className="text-xs font-semibold text-violet-400">VideoGen</span>
+          </div>
+          <p className="text-[10px] text-text-muted mt-1 ml-6">
+            AI 영상 자동 생성 솔루션
+          </p>
+        </button>
+        <p className="text-center text-[9px] text-text-muted/50 pt-1">
+          vibelabs.kr
+        </p>
+      </div>
     </div>
   );
 };
