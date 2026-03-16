@@ -26,6 +26,7 @@
     "shell:allow-execute",
     "process:default",
     "process:allow-exit",
-    "process:allow-restart"
+    "process:allow-restart",
+    "core:webview:allow-set-webview-zoom"
   ]
 }

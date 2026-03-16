@@ -63,4 +63,10 @@ export type ThemeId =
   | 'nord'
   | 'solarized-dark'
   | 'solarized-light'
-  | 'tokyo-night';
+  | 'tokyo-night'
+  | 'catppuccin-mocha'
+  | 'catppuccin-latte'
+  | 'monokai-pro'
+  | 'material-dark'
+  | 'rose-pine'
+  | 'github-dark';

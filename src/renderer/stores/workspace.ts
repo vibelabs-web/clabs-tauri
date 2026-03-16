@@ -68,6 +68,14 @@ interface WorkspaceState {
   closeEditorTab: (tabId: string, paneId: string, editorTabId: string) => void;
   setEditorTabDirty: (tabId: string, paneId: string, editorTabId: string, isDirty: boolean) => void;
 
+  // 브로드캐스트 모드
+  broadcastMode: boolean;
+  toggleBroadcastMode: () => void;
+
+  // 세션 저장/복원
+  saveSession: () => Promise<void>;
+  restoreSession: () => Promise<boolean>;
+
   // 유틸리티
   getTabByProject: (projectPath: string) => WorkspaceTab | null;
   getAllLeavesInTab: (tabId: string) => PaneLeaf[];
@@ -76,6 +84,7 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   tabs: [],
   activeTabId: '',
+  broadcastMode: false,
 
   addTab: (project: Project) => {
     const { tabs } = get();
@@ -430,6 +439,64 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const newTabs = [...tabs];
     newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
     set({ tabs: newTabs });
+  },
+
+  toggleBroadcastMode: () => {
+    set((state) => ({ broadcastMode: !state.broadcastMode }));
+  },
+
+  saveSession: async () => {
+    try {
+      const { tabs, activeTabId } = get();
+      const sessionData = tabs.map(tab => ({
+        id: tab.id,
+        project: { path: tab.project.path, name: tab.project.name },
+        activePaneId: tab.activePaneId,
+      }));
+      const data = JSON.stringify({ tabs: sessionData, activeTabId });
+      if (window.api?.session?.save) {
+        await window.api.session.save(data);
+      }
+    } catch (error) {
+      console.error('세션 저장 실패:', error);
+    }
+  },
+
+  restoreSession: async () => {
+    try {
+      if (!window.api?.session?.load) return false;
+      const raw = await window.api.session.load();
+      if (!raw) return false;
+
+      const session = JSON.parse(raw);
+      if (!session.tabs || !Array.isArray(session.tabs) || session.tabs.length === 0) return false;
+
+      const { addTab, switchTab } = get();
+      for (const tabData of session.tabs) {
+        if (tabData.project?.path && tabData.project?.name) {
+          addTab({
+            path: tabData.project.path,
+            name: tabData.project.name,
+            lastOpened: new Date(),
+            skillpackVersion: '1.9.3',
+          });
+        }
+      }
+
+      // 마지막 활성 탭 복원
+      const { tabs } = get();
+      if (session.activeTabId) {
+        const matchTab = tabs.find(t =>
+          session.tabs.some((st: any) => st.project?.path === t.project.path && st.id === session.activeTabId)
+        );
+        if (matchTab) switchTab(matchTab.id);
+      }
+
+      return tabs.length > 0;
+    } catch (error) {
+      console.error('세션 복원 실패:', error);
+      return false;
+    }
   },
 
   // --- 유틸리티 ---

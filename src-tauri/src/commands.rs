@@ -858,6 +858,27 @@ pub async fn file_watcher_stop(state: State<'_, AppState>) -> Result<(), String>
 }
 
 // ─────────────────────────────────────────────────────────────
+// Session Persistence Commands
+// ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn session_save(data: String) -> Result<(), String> {
+    let path = session_path();
+    fs::write(&path, &data).map_err(|e| format!("세션 저장 실패: {}", e))
+}
+
+#[tauri::command]
+pub async fn session_load() -> Result<Option<String>, String> {
+    let path = session_path();
+    if path.exists() {
+        let content = fs::read_to_string(&path).map_err(|e| format!("세션 로드 실패: {}", e))?;
+        Ok(Some(content))
+    } else {
+        Ok(None)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
@@ -886,6 +907,14 @@ pub fn load_projects() -> Vec<Value> {
     } else {
         Vec::new()
     }
+}
+
+fn session_path() -> PathBuf {
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config"))
+        .join("com.claudelabs.clabs");
+    fs::create_dir_all(&config_dir).ok();
+    config_dir.join("session.json")
 }
 
 fn command_history_path() -> PathBuf {

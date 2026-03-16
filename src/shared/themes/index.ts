@@ -10,6 +10,12 @@ import { nord } from './presets/nord';
 import { solarizedDark } from './presets/solarized-dark';
 import { solarizedLight } from './presets/solarized-light';
 import { tokyoNight } from './presets/tokyo-night';
+import { catppuccinMocha } from './presets/catppuccin-mocha';
+import { catppuccinLatte } from './presets/catppuccin-latte';
+import { monokaiPro } from './presets/monokai-pro';
+import { materialDark } from './presets/material-dark';
+import { rosePine } from './presets/rose-pine';
+import { githubDark } from './presets/github-dark';
 
 // 모든 테마 목록
 export const themes: Record<ThemeId, Theme> = {
@@ -22,6 +28,12 @@ export const themes: Record<ThemeId, Theme> = {
   'solarized-dark': solarizedDark,
   'solarized-light': solarizedLight,
   'tokyo-night': tokyoNight,
+  'catppuccin-mocha': catppuccinMocha,
+  'catppuccin-latte': catppuccinLatte,
+  'monokai-pro': monokaiPro,
+  'material-dark': materialDark,
+  'rose-pine': rosePine,
+  'github-dark': githubDark,
 };
 
 // 테마 목록 배열 (UI에서 사용)
@@ -47,3 +59,9 @@ export { nord } from './presets/nord';
 export { solarizedDark } from './presets/solarized-dark';
 export { solarizedLight } from './presets/solarized-light';
 export { tokyoNight } from './presets/tokyo-night';
+export { catppuccinMocha } from './presets/catppuccin-mocha';
+export { catppuccinLatte } from './presets/catppuccin-latte';
+export { monokaiPro } from './presets/monokai-pro';
+export { materialDark } from './presets/material-dark';
+export { rosePine } from './presets/rose-pine';
+export { githubDark } from './presets/github-dark';

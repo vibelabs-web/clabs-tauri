@@ -16,6 +16,12 @@ pub struct TerminalConfig {
     pub cursorBlink: bool,
     #[serde(default = "default_scrollback")]
     pub scrollback: u32,
+    #[serde(default)]
+    pub autoTheme: bool,
+    #[serde(default = "default_dark_theme")]
+    pub darkThemeId: String,
+    #[serde(default = "default_light_theme")]
+    pub lightThemeId: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +64,8 @@ fn default_skills_path() -> String {
         .map(|h| h.join(".claude").join("skills").to_string_lossy().to_string())
         .unwrap_or_default()
 }
+fn default_dark_theme() -> String { "default-dark".to_string() }
+fn default_light_theme() -> String { "solarized-light".to_string() }
 fn default_theme() -> String { "default-dark".to_string() }
 fn default_language() -> String { "ko".to_string() }
 
@@ -69,6 +77,9 @@ impl Default for TerminalConfig {
             cursorStyle: default_cursor_style(),
             cursorBlink: true,
             scrollback: default_scrollback(),
+            autoTheme: false,
+            darkThemeId: default_dark_theme(),
+            lightThemeId: default_light_theme(),
         }
     }
 }

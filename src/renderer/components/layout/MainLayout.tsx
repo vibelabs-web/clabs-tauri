@@ -52,6 +52,9 @@ export interface MainLayoutProps {
   onSwitchEditorTab?: (paneId: string, editorTabId: string) => void;
   onCloseEditorTab?: (paneId: string, editorTabId: string) => void;
   onEditorTabDirtyChange?: (paneId: string, editorTabId: string, isDirty: boolean) => void;
+  // 브로드캐스트 모드
+  broadcastMode?: boolean;
+  onToggleBroadcast?: () => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -95,6 +98,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   onSwitchEditorTab,
   onCloseEditorTab,
   onEditorTabDirtyChange,
+  // 브로드캐스트
+  broadcastMode,
+  onToggleBroadcast,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -299,6 +305,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                   activePaneId={activePaneId}
                 />
               </div>
+              {onToggleBroadcast && (
+                <button
+                  type="button"
+                  onClick={onToggleBroadcast}
+                  aria-label="브로드캐스트 모드"
+                  title={broadcastMode ? '브로드캐스트 모드 끄기' : '브로드캐스트 모드 켜기 (모든 패널에 동시 입력)'}
+                  className={`flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-lg transition-colors duration-200 ${
+                    broadcastMode
+                      ? 'bg-accent text-bg-primary'
+                      : 'bg-bg-tertiary hover:bg-bg-hover text-text-secondary'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" />
+                  </svg>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleCopyTerminal}

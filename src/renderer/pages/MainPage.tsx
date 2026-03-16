@@ -43,6 +43,10 @@ export default function MainPage() {
     switchEditorTab,
     closeEditorTab,
     setEditorTabDirty,
+    broadcastMode,
+    toggleBroadcastMode,
+    saveSession,
+    restoreSession,
   } = useWorkspaceStore();
 
   const activeTab = getActiveTab();
@@ -85,11 +89,19 @@ export default function MainPage() {
     }
   }, []);
 
-  // PTY 종료 이벤트 구독 — 워크스페이스 탭에서 paneId 제거
+  // PTY 종료 이벤트 구독 — 워크스페이스 탭에서 paneId 제거 + 시스템 알림
   useEffect(() => {
     if (window.api?.pty?.onExit) {
       const unsubscribe = window.api.pty.onExit((paneId, code) => {
         console.log(`[MainPage] PTY ${paneId} exited with code:`, code);
+
+        // 프로세스 완료 시스템 알림 (앱이 포커스되지 않았을 때)
+        if (!document.hasFocus() && Notification.permission === 'granted') {
+          new Notification('프로세스 완료', {
+            body: `터미널 프로세스가 ${code === 0 ? '성공적으로' : `코드 ${code}로`} 종료되었습니다.`,
+            icon: undefined,
+          });
+        }
 
         // 모든 탭에서 해당 paneId를 spawned에서 제거
         const { tabs } = useWorkspaceStore.getState();
@@ -110,6 +122,13 @@ export default function MainPage() {
     }
   }, [unmarkPaneSpawned]);
 
+  // 시스템 알림 권한 요청
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // PTY 시작 후 usage 데이터 주기적 요청
   useEffect(() => {
     if (isPtyRunning && window.api?.usage?.get) {
@@ -126,6 +145,25 @@ export default function MainPage() {
       return () => clearInterval(interval);
     }
   }, [isPtyRunning]);
+
+  // 세션 복원 (앱 시작 시) - 탭이 없을 때만
+  useEffect(() => {
+    if (tabs.length === 0) {
+      restoreSession().then((restored) => {
+        if (!restored) {
+          openProjectSelector();
+        }
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 세션 자동 저장 (탭 변경 시)
+  useEffect(() => {
+    if (tabs.length > 0) {
+      saveSession();
+    }
+  }, [tabs, activeTabId, saveSession]);
 
   // 태스크 시간 타이머
   useEffect(() => {
@@ -219,12 +257,19 @@ export default function MainPage() {
     }
   }, [markPaneSpawned, unmarkPaneSpawned]);
 
-  // 터미널 데이터 핸들러 (xterm → 활성 패인 PTY)
+  // 터미널 데이터 핸들러 (xterm → 활성 패인 PTY, 브로드캐스트 모드 지원)
   const handleData = useCallback((data: string) => {
-    if (window.api?.pty && isPtyRunningRef.current && activeTab) {
+    if (!window.api?.pty || !isPtyRunningRef.current || !activeTab) return;
+
+    if (broadcastMode) {
+      // 브로드캐스트: 모든 spawned 패인에 동시 전송
+      for (const paneId of activeTab.spawnedPaneIds) {
+        window.api.pty.write(data, paneId);
+      }
+    } else {
       window.api.pty.write(data, activeTab.activePaneId);
     }
-  }, [activeTab]);
+  }, [activeTab, broadcastMode]);
 
   // 패인 분할 핸들러
   const handleSplit = useCallback((paneId: string, direction: SplitDirection) => {
@@ -456,6 +501,8 @@ export default function MainPage() {
         onSwitchEditorTab={handleSwitchEditorTab}
         onCloseEditorTab={handleCloseEditorTab}
         onEditorTabDirtyChange={handleEditorTabDirtyChange}
+        broadcastMode={broadcastMode}
+        onToggleBroadcast={toggleBroadcastMode}
       />
     </>
   );

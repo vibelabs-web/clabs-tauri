@@ -8,7 +8,7 @@ import type { CommandHistoryEntry } from './claude-cli';
 // 기본 테마 타입 (하위 호환성 유지)
 export type Theme = 'dark' | 'light';
 
-// 확장 테마 ID (9개 테마 지원)
+// 확장 테마 ID (15개 테마 지원)
 export type ThemeId =
   | 'default-dark'
   | 'gruvbox-dark'
@@ -18,7 +18,13 @@ export type ThemeId =
   | 'nord'
   | 'solarized-dark'
   | 'solarized-light'
-  | 'tokyo-night';
+  | 'tokyo-night'
+  | 'catppuccin-mocha'
+  | 'catppuccin-latte'
+  | 'monokai-pro'
+  | 'material-dark'
+  | 'rose-pine'
+  | 'github-dark';
 export type Language = 'ko' | 'en';
 export type CursorStyle = 'block' | 'underline' | 'bar';
 
@@ -141,6 +147,10 @@ export interface TerminalConfig {
   cursorStyle: CursorStyle;
   cursorBlink: boolean;
   scrollback: number;
+  // 자동 테마 전환
+  autoTheme?: boolean;
+  darkThemeId?: string;
+  lightThemeId?: string;
 }
 
 export interface SkillpackConfig {
@@ -381,6 +391,10 @@ export interface IPCApi {
     start: (path: string) => Promise<void>;
     stop: () => Promise<void>;
     onChanged: (callback: (change: { path: string; diff: string; change_type: string; timestamp: number }) => void) => () => void;
+  };
+  session: {
+    save: (data: string) => Promise<void>;
+    load: () => Promise<string | null>;
   };
 }
 

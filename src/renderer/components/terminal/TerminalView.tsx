@@ -5,7 +5,9 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { Unicode11Addon } from 'xterm-addon-unicode11';
 import { SearchAddon } from 'xterm-addon-search';
-import { WebglAddon } from 'xterm-addon-webgl';
+import { WebLinksAddon } from 'xterm-addon-web-links';
+import { ImageAddon } from 'xterm-addon-image';
+import { LigaturesAddon } from 'xterm-addon-ligatures';
 import 'xterm/css/xterm.css';
 import { useThemeStore } from '@renderer/stores/theme';
 import { registerTerminal, unregisterTerminal } from '@renderer/utils/terminal-registry';
@@ -36,6 +38,7 @@ const extractGhostText = (data: string): string | null => {
 
 export function TerminalView({ paneId = 'pane-default', onData, onReady, onSuggestion, onPtyOutput }: TerminalViewProps) {
   const [searchVisible, setSearchVisible] = useState(false);
+  const [pasteConfirm, setPasteConfirm] = useState<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -128,19 +131,30 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         terminal.loadAddon(searchAddon);
         searchAddonRef.current = searchAddon;
 
+        // WebLinksAddon 로드 (URL 감지 + 클릭 가능한 링크)
+        const webLinksAddon = new WebLinksAddon((_event, uri) => {
+          window.open(uri, '_blank');
+        });
+        terminal.loadAddon(webLinksAddon);
+
         terminal.open(container);
 
-        // WebGL 렌더러 (성능 향상, 실패 시 Canvas 폴백)
+        // ImageAddon (Sixel/iTerm2 이미지 프로토콜 지원)
         try {
-          const webglAddon = new WebglAddon();
-          webglAddon.onContextLoss(() => {
-            console.warn(`[TerminalView ${paneId}] WebGL context lost, falling back to canvas`);
-            webglAddon.dispose();
-          });
-          terminal.loadAddon(webglAddon);
-          console.log(`[TerminalView ${paneId}] WebGL renderer loaded`);
+          const imageAddon = new ImageAddon();
+          terminal.loadAddon(imageAddon);
+          console.log(`[TerminalView ${paneId}] Image addon loaded`);
         } catch (e) {
-          console.warn(`[TerminalView ${paneId}] WebGL not available, using canvas renderer`);
+          console.warn(`[TerminalView ${paneId}] Image addon not available`);
+        }
+
+        // LigaturesAddon (프로그래밍 합자 지원: =>, !==, -> 등)
+        try {
+          const ligaturesAddon = new LigaturesAddon();
+          terminal.loadAddon(ligaturesAddon);
+          console.log(`[TerminalView ${paneId}] Ligatures addon loaded`);
+        } catch (e) {
+          console.warn(`[TerminalView ${paneId}] Ligatures addon not available`);
         }
 
         terminalRef.current = terminal;
@@ -231,8 +245,21 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           }
 
           if (isMeta && event.key === 'v' && event.type === 'keydown') {
-            navigator.clipboard.readText().then((text) => {
-              if (text && onData && !disposedRef.current) onData(text);
+            navigator.clipboard.readText().then(async (text) => {
+              if (!text || !onData || disposedRef.current) return;
+              // 안전 검사: 여러 줄이거나 위험한 명령 패턴
+              const isMultiLine = text.includes('\n') && text.trim().split('\n').length > 1;
+              const dangerousPatterns = /\b(rm\s+-rf|sudo\s+rm|mkfs|dd\s+if=|:(){ :|>\s*\/dev\/|chmod\s+-R\s+777|curl.*\|\s*(ba)?sh)\b/i;
+              const isDangerous = dangerousPatterns.test(text);
+
+              if (isMultiLine || isDangerous) {
+                const ok = await new Promise<boolean>((resolve) => {
+                  setPasteConfirm({ text, resolve });
+                });
+                if (ok && !disposedRef.current) onData(text);
+              } else {
+                onData(text);
+              }
             }).catch(() => {});
             return false;
           }
@@ -377,6 +404,44 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* 붙여넣기 안전 경고 다이얼로그 */}
+      {pasteConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-bg-secondary border border-border-default rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden">
+            <div className="px-4 py-3 border-b border-border-default flex items-center gap-2">
+              <svg className="w-5 h-5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="text-sm font-semibold text-text-primary">붙여넣기 확인</span>
+            </div>
+            <div className="p-4">
+              <p className="text-xs text-text-muted mb-2">
+                {pasteConfirm.text.includes('\n') ? '여러 줄의 텍스트를' : '위험할 수 있는 명령을'} 붙여넣으려 합니다:
+              </p>
+              <pre className="bg-bg-primary border border-border-default rounded-lg p-3 text-xs text-text-secondary font-mono max-h-40 overflow-auto whitespace-pre-wrap break-all">
+                {pasteConfirm.text.length > 500 ? pasteConfirm.text.slice(0, 500) + '...' : pasteConfirm.text}
+              </pre>
+              <p className="text-xs text-text-muted mt-2">
+                {pasteConfirm.text.trim().split('\n').length}줄 · {pasteConfirm.text.length}자
+              </p>
+            </div>
+            <div className="px-4 py-3 border-t border-border-default flex justify-end gap-2">
+              <button
+                onClick={() => { pasteConfirm.resolve(false); setPasteConfirm(null); }}
+                className="px-4 py-1.5 text-sm text-text-secondary hover:text-text-primary bg-bg-tertiary hover:bg-bg-hover rounded-lg transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => { pasteConfirm.resolve(true); setPasteConfirm(null); }}
+                className="px-4 py-1.5 text-sm text-bg-primary bg-accent hover:bg-accent/80 rounded-lg transition-colors"
+              >
+                붙여넣기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <TerminalSearchBar
         visible={searchVisible}
         onClose={handleSearchClose}

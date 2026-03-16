@@ -26,22 +26,23 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 });
 
-// Cmd+=/- 줌 (Tauri WKWebView는 기본 줌 단축키 미지원)
-let currentZoom = 100;
+// Cmd+=/- 줌 (Tauri 네이티브 WebView 줌 — 텍스트 선명도 유지)
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+let currentZoom = 1.0;
 window.addEventListener('keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey)) return;
   if (e.key === '=' || e.key === '+') {
     e.preventDefault();
-    currentZoom = Math.min(200, currentZoom + 10);
-    (document.body.style as any).zoom = `${currentZoom}%`;
+    currentZoom = Math.min(2.0, +(currentZoom + 0.1).toFixed(1));
+    getCurrentWebviewWindow().setZoom(currentZoom);
   } else if (e.key === '-') {
     e.preventDefault();
-    currentZoom = Math.max(50, currentZoom - 10);
-    (document.body.style as any).zoom = `${currentZoom}%`;
+    currentZoom = Math.max(0.5, +(currentZoom - 0.1).toFixed(1));
+    getCurrentWebviewWindow().setZoom(currentZoom);
   } else if (e.key === '0') {
     e.preventDefault();
-    currentZoom = 100;
-    (document.body.style as any).zoom = '100%';
+    currentZoom = 1.0;
+    getCurrentWebviewWindow().setZoom(currentZoom);
   }
 });
 

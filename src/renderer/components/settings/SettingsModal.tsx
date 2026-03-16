@@ -28,7 +28,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   } = useSettingsStore();
 
   // 테마 store
-  const { currentThemeId, setTheme } = useThemeStore();
+  const { currentThemeId, setTheme, autoTheme, setAutoTheme, darkThemeId, lightThemeId, setDarkThemeId, setLightThemeId } = useThemeStore();
 
   // 컴포넌트 마운트 시 설정 로드
   useEffect(() => {
@@ -155,6 +155,56 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* 자동 테마 전환 */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <label className="block text-sm font-medium text-text-primary">시스템 테마 자동 전환</label>
+                      <p className="text-xs text-text-muted mt-0.5">OS 다크/라이트 모드에 따라 테마 자동 변경</p>
+                    </div>
+                    <button
+                      onClick={() => setAutoTheme(!autoTheme)}
+                      className={`w-12 h-6 rounded-full transition-colors ${
+                        autoTheme ? 'bg-accent' : 'bg-bg-tertiary'
+                      }`}
+                    >
+                      <div
+                        className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                          autoTheme ? 'translate-x-6' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {autoTheme && (
+                    <div className="grid grid-cols-2 gap-3 mt-3">
+                      <div>
+                        <label className="block text-xs font-medium mb-1.5 text-text-muted">다크 모드 테마</label>
+                        <select
+                          value={darkThemeId}
+                          onChange={(e) => setDarkThemeId(e.target.value as ThemeId)}
+                          className="w-full px-3 py-2 bg-bg-primary border border-bg-tertiary rounded-lg focus:outline-none focus:border-accent text-text-primary text-sm"
+                        >
+                          {themeList.filter(t => t.isDark).map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1.5 text-text-muted">라이트 모드 테마</label>
+                        <select
+                          value={lightThemeId}
+                          onChange={(e) => setLightThemeId(e.target.value as ThemeId)}
+                          className="w-full px-3 py-2 bg-bg-primary border border-bg-tertiary rounded-lg focus:outline-none focus:border-accent text-text-primary text-sm"
+                        >
+                          {themeList.filter(t => !t.isDark).map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -219,6 +219,11 @@ const api: IPCApi = {
       return () => { unlisten?.(); };
     },
   },
+
+  session: {
+    save: (data: string) => invoke('session_save', { data }) as Promise<void>,
+    load: () => invoke('session_load') as Promise<string | null>,
+  },
 };
 
 // Expose as window.api for compatibility

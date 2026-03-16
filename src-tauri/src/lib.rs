@@ -157,6 +157,9 @@ pub fn run() {
             // File Watcher
             commands::file_watcher_start,
             commands::file_watcher_stop,
+            // Session Persistence
+            commands::session_save,
+            commands::session_load,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
