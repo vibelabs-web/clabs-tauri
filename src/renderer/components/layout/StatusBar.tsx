@@ -4,6 +4,7 @@
 import React from 'react';
 import { UsageData } from '@renderer/types/usage';
 import { formatDuration } from '@renderer/utils/formatters';
+import { useSidebarStore } from '@renderer/stores/sidebar';
 
 interface StatusBarProps {
   usage: UsageData;
@@ -74,6 +75,9 @@ const StatusBar: React.FC<StatusBarProps> = ({ usage, onSettingsClick }) => {
     sevenDayReset
   } = usage;
 
+  // 비용 탭으로 전환 (CTX/5H/7D 클릭 시)
+  const { setActiveTab } = useSidebarStore();
+
   // 컨텍스트 사용률 계산
   const contextPercent = Math.min(100, (tokensUsed / contextLimit) * 100);
 
@@ -89,8 +93,15 @@ const StatusBar: React.FC<StatusBarProps> = ({ usage, onSettingsClick }) => {
       data-testid="status-bar"
       className="flex items-center gap-4 px-4 py-2 bg-bg-secondary border-t border-border-default text-xs"
     >
-      {/* Context 사용량 */}
-      <div className="flex items-center gap-2">
+      {/* Context 사용량 — 클릭 시 비용 탭으로 이동 */}
+      <div
+        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => setActiveTab('cost')}
+        title="비용 대시보드 열기"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && setActiveTab('cost')}
+      >
         <span className="text-pink-400 font-medium">CTX</span>
         <MiniProgressBar percent={contextPercent} type="context" width="w-20" />
         <span className={`font-bold ${getTextColor(contextPercent)}`}>
@@ -104,8 +115,15 @@ const StatusBar: React.FC<StatusBarProps> = ({ usage, onSettingsClick }) => {
       {/* 구분선 */}
       <div className="w-px h-4 bg-border-default" />
 
-      {/* 5시간 사용량 */}
-      <div className="flex items-center gap-2">
+      {/* 5시간 사용량 — 클릭 시 비용 탭으로 이동 */}
+      <div
+        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => setActiveTab('cost')}
+        title="비용 대시보드 열기"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && setActiveTab('cost')}
+      >
         <span className="text-indigo-400 font-medium">5H</span>
         {fiveHourUsage !== null && fiveHourUsage !== undefined ? (
           <>
@@ -125,8 +143,15 @@ const StatusBar: React.FC<StatusBarProps> = ({ usage, onSettingsClick }) => {
       {/* 구분선 */}
       <div className="w-px h-4 bg-border-default" />
 
-      {/* 7일 사용량 */}
-      <div className="flex items-center gap-2">
+      {/* 7일 사용량 — 클릭 시 비용 탭으로 이동 */}
+      <div
+        className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => setActiveTab('cost')}
+        title="비용 대시보드 열기"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && setActiveTab('cost')}
+      >
         <span className="text-amber-400 font-medium">7D</span>
         {sevenDayUsage !== null && sevenDayUsage !== undefined ? (
           <>

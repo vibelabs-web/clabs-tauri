@@ -41,6 +41,16 @@ Clabs는 Anthropic의 [Claude Code](https://docs.anthropic.com/en/docs/claude-co
 - **확장 입력 모달**: 긴 프롬프트 작성을 위한 대형 텍스트 에디터 (`Cmd+Enter` 전송)
 - **고스트 텍스트**: Claude Code의 프롬프트 제안을 `[Tab]`으로 수락
 
+### 파일 에디터 & 탐색기
+
+프로젝트 사이드바에서 파일을 클릭하면 에디터 탭으로 열립니다. VS Code 스타일의 탭 바에서 터미널과 파일 에디터를 전환할 수 있습니다.
+
+- **파일 편집**: 라인 넘버 + textarea 기반 에디터로 파일 직접 수정
+- **Ctrl+S / Cmd+S 저장**: 키보드 단축키 또는 저장 버튼으로 파일 저장
+- **Dirty 표시**: 수정된 파일 탭에 흰 점 표시, 저장하지 않고 닫을 때 확인 다이얼로그
+- **새 파일/폴더 생성**: 헤더 버튼 또는 디렉토리 우클릭 → 인라인 입력으로 생성
+- **Tab 들여쓰기**: 에디터 내 Tab 키로 2칸 들여쓰기
+
 ### CLI 빌더
 
 Claude Code의 CLI 플래그를 GUI로 조합하여 명령어를 생성합니다. `--model`, `--max-turns`, `--dangerously-skip-permissions` 등 15개 플래그를 드래그앤드롭으로 구성.

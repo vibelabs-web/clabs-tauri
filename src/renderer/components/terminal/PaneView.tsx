@@ -1,9 +1,12 @@
-// PaneView - 리프 패인 래퍼 (PaneHeader + TerminalView)
+// PaneView - 리프 패인 래퍼 (PaneHeader + EditorTabBar + TerminalView/FilePreviewView)
 // absolute positioning으로 TerminalView 크기 확보
 
+import { useCallback } from 'react';
 import type { PaneLeaf } from '@shared/pane-types';
 import { PaneHeader } from './PaneHeader';
+import { EditorTabBar } from './EditorTabBar';
 import { TerminalView } from './TerminalView';
+import { FilePreviewView } from './FilePreviewView';
 
 export interface PaneViewProps {
   pane: PaneLeaf;
@@ -18,6 +21,9 @@ export interface PaneViewProps {
   onSuggestion?: (suggestion: string) => void;
   onPtyOutput?: (data: string) => void;
   projectPath?: string;
+  onSwitchEditorTab?: (paneId: string, editorTabId: string) => void;
+  onCloseEditorTab?: (paneId: string, editorTabId: string) => void;
+  onEditorTabDirtyChange?: (paneId: string, editorTabId: string, isDirty: boolean) => void;
 }
 
 export function PaneView({
@@ -33,7 +39,25 @@ export function PaneView({
   onSuggestion,
   onPtyOutput,
   projectPath,
+  onSwitchEditorTab,
+  onCloseEditorTab,
+  onEditorTabDirtyChange,
 }: PaneViewProps) {
+  const hasEditorTabs = pane.editorTabs && pane.editorTabs.length > 0;
+
+  // 활성 에디터 탭 결정
+  const activeEditorTab = hasEditorTabs
+    ? pane.editorTabs!.find(t => t.id === pane.activeEditorTabId) || pane.editorTabs![0]
+    : null;
+
+  const isTerminalActive = !activeEditorTab || activeEditorTab.type === 'terminal';
+
+  const handleDirtyChange = useCallback((isDirty: boolean) => {
+    if (activeEditorTab && onEditorTabDirtyChange) {
+      onEditorTabDirtyChange(pane.id, activeEditorTab.id, isDirty);
+    }
+  }, [pane.id, activeEditorTab, onEditorTabDirtyChange]);
+
   return (
     <div
       style={{
@@ -59,9 +83,24 @@ export function PaneView({
         onRename={(name) => onRename(pane.id, name)}
         onClick={() => onPaneClick(pane.id)}
       />
-      {/* TerminalView 영역: position relative + absolute로 확실한 크기 전달 */}
+
+      {/* 에디터 탭 바 (파일 탭이 있을 때만 표시) */}
+      {hasEditorTabs && onSwitchEditorTab && onCloseEditorTab && (
+        <EditorTabBar
+          tabs={pane.editorTabs!}
+          activeTabId={pane.activeEditorTabId}
+          onSwitch={(editorTabId) => onSwitchEditorTab(pane.id, editorTabId)}
+          onClose={(editorTabId) => onCloseEditorTab(pane.id, editorTabId)}
+        />
+      )}
+
+      {/* 콘텐츠 영역 */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+        {/* 터미널 (항상 렌더링, 비활성 시 숨김으로 PTY 연결 유지) */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          display: isTerminalActive ? 'block' : 'none',
+        }}>
           <TerminalView
             key={`${projectPath || 'default'}-${pane.id}`}
             paneId={pane.id}
@@ -71,6 +110,16 @@ export function PaneView({
             onPtyOutput={onPtyOutput}
           />
         </div>
+
+        {/* 파일 에디터 (파일 탭 활성 시) */}
+        {!isTerminalActive && activeEditorTab?.filePath && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+            <FilePreviewView
+              filePath={activeEditorTab.filePath}
+              onDirtyChange={handleDirtyChange}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

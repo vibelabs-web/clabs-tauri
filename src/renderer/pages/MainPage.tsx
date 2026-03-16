@@ -8,6 +8,9 @@ import SettingsModal from '../components/settings/SettingsModal';
 import CommandBuilder from '../components/terminal/CommandBuilder';
 import { useProjectStore } from '../stores/project';
 import { useWorkspaceStore } from '../stores/workspace';
+import { useTimelineStore } from '../stores/timeline';
+import { useDiffStore } from '../stores/diff';
+import { extractAllTurns } from '../utils/terminal-registry';
 import type { UsageData } from '../types/usage';
 import { stripAnsi } from '../utils/ansi';
 import type { SplitDirection } from '@shared/pane-types';
@@ -36,6 +39,10 @@ export default function MainPage() {
     markPaneSpawned,
     unmarkPaneSpawned,
     isPaneSpawned,
+    addEditorTab,
+    switchEditorTab,
+    closeEditorTab,
+    setEditorTabDirty,
   } = useWorkspaceStore();
 
   const activeTab = getActiveTab();
@@ -62,6 +69,11 @@ export default function MainPage() {
   const writeCooldownRef = useRef(false);
   const responseBufferRef = useRef<string[]>([]);
   const [lastResponse, setLastResponse] = useState('');
+  const timelineDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 타임라인/diff 스토어
+  const { setTurns } = useTimelineStore();
+  const { addChange } = useDiffStore();
 
   // Usage 업데이트 구독
   useEffect(() => {
@@ -123,6 +135,31 @@ export default function MainPage() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // 파일 감시 시작/종료 (활성 탭 프로젝트 연동)
+  useEffect(() => {
+    const tab = activeTab;
+    if (!tab?.project?.path || !window.api?.fileWatcher) return;
+
+    window.api.fileWatcher.start(tab.project.path).catch((err: unknown) => {
+      console.error('[MainPage] 파일 감시 시작 실패:', err);
+    });
+
+    // 파일 변경 이벤트 구독
+    const unsubscribe = window.api.fileWatcher.onChanged((change) => {
+      addChange({
+        path: change.path,
+        diff: change.diff,
+        changeType: change.change_type as 'modified' | 'created' | 'deleted',
+        timestamp: change.timestamp,
+      });
+    });
+
+    return () => {
+      unsubscribe();
+      window.api?.fileWatcher?.stop().catch(() => {});
+    };
+  }, [activeTab?.project?.path, addChange]);
 
   // 전역 ESC 키 핸들러
   useEffect(() => {
@@ -312,10 +349,20 @@ export default function MainPage() {
     openProjectSelector();
   }, [openProjectSelector]);
 
-  // PTY 출력 캡처 핸들러
+  // PTY 출력 캡처 핸들러 + 타임라인 파싱 트리거
   const handlePtyOutput = useCallback((data: string) => {
     responseBufferRef.current.push(data);
-  }, []);
+
+    // 500ms 디바운스로 타임라인 파싱
+    if (timelineDebounceRef.current) clearTimeout(timelineDebounceRef.current);
+    timelineDebounceRef.current = setTimeout(() => {
+      const tab = useWorkspaceStore.getState().getActiveTab();
+      if (tab) {
+        const turns = extractAllTurns(tab.activePaneId);
+        setTurns(turns);
+      }
+    }, 500);
+  }, [setTurns]);
 
   // 프롬프트 제안 핸들러
   const handleSuggestion = useCallback((text: string) => {
@@ -341,6 +388,22 @@ export default function MainPage() {
       setTimeout(() => { writeCooldownRef.current = false; }, 1000);
     }
   }, [isPtyRunning, activeTab]);
+
+  // 에디터 탭 핸들러
+  const handleSwitchEditorTab = useCallback((paneId: string, editorTabId: string) => {
+    if (!activeTab) return;
+    switchEditorTab(activeTab.id, paneId, editorTabId);
+  }, [activeTab, switchEditorTab]);
+
+  const handleCloseEditorTab = useCallback((paneId: string, editorTabId: string) => {
+    if (!activeTab) return;
+    closeEditorTab(activeTab.id, paneId, editorTabId);
+  }, [activeTab, closeEditorTab]);
+
+  const handleEditorTabDirtyChange = useCallback((paneId: string, editorTabId: string, isDirty: boolean) => {
+    if (!activeTab) return;
+    setEditorTabDirty(activeTab.id, paneId, editorTabId, isDirty);
+  }, [activeTab, setEditorTabDirty]);
 
   return (
     <>
@@ -390,6 +453,9 @@ export default function MainPage() {
         onTabSwitch={handleTabSwitch}
         onTabClose={handleTabClose}
         onTabAdd={handleTabAdd}
+        onSwitchEditorTab={handleSwitchEditorTab}
+        onCloseEditorTab={handleCloseEditorTab}
+        onEditorTabDirtyChange={handleEditorTabDirtyChange}
       />
     </>
   );

@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import TitleBar from './TitleBar';
 import ToolbarBar from './ToolbarBar';
-import { SkillPanel } from './SkillPanel';
+import { SidebarContainer } from './SidebarContainer';
 import { SplitPaneContainer } from '../terminal/SplitPaneContainer';
 import { InputBox } from '../terminal/InputBox';
 import StatusBar from './StatusBar';
@@ -48,6 +48,10 @@ export interface MainLayoutProps {
   onTabSwitch?: (tabId: string) => void;
   onTabClose?: (tabId: string) => void;
   onTabAdd?: () => void;
+  // 에디터 탭 props
+  onSwitchEditorTab?: (paneId: string, editorTabId: string) => void;
+  onCloseEditorTab?: (paneId: string, editorTabId: string) => void;
+  onEditorTabDirtyChange?: (paneId: string, editorTabId: string, isDirty: boolean) => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -87,6 +91,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   onTabSwitch,
   onTabClose,
   onTabAdd,
+  // 에디터 탭
+  onSwitchEditorTab,
+  onCloseEditorTab,
+  onEditorTabDirtyChange,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -199,11 +207,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           className="flex-shrink-0 border-r border-border-default overflow-hidden"
           style={{ width: sidebarWidth }}
         >
-          <SkillPanel
+          <SidebarContainer
             workflow={workflow}
             recommendation={recommendation}
             onSkillSelect={handleSkillSelect}
             onOpenCommandBuilder={onOpenCommandBuilder}
+            usage={usage}
+            projectPath={projectPath}
           />
         </div>
 
@@ -241,6 +251,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                       onSuggestion={onSuggestion}
                       onPtyOutput={onPtyOutput}
                       projectPath={tab.project.path}
+                      onSwitchEditorTab={onSwitchEditorTab}
+                      onCloseEditorTab={onCloseEditorTab}
+                      onEditorTabDirtyChange={onEditorTabDirtyChange}
                     />
                   </div>
                 );
@@ -260,6 +273,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                 onSuggestion={onSuggestion}
                 onPtyOutput={onPtyOutput}
                 projectPath={projectPath}
+                onSwitchEditorTab={onSwitchEditorTab}
+                onCloseEditorTab={onCloseEditorTab}
               />
             ) : (
               <div className="h-full w-full flex items-center justify-center text-text-secondary">

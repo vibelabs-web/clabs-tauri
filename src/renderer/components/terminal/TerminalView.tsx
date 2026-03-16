@@ -1,58 +1,53 @@
-// @TASK P2-S1-T1 - xterm.js 기반 터미널 표시 컴포넌트
+// xterm.js 기반 터미널 표시 컴포넌트
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { Unicode11Addon } from 'xterm-addon-unicode11';
+import { SearchAddon } from 'xterm-addon-search';
+import { WebglAddon } from 'xterm-addon-webgl';
 import 'xterm/css/xterm.css';
 import { useThemeStore } from '@renderer/stores/theme';
 import { registerTerminal, unregisterTerminal } from '@renderer/utils/terminal-registry';
+import { TerminalSearchBar } from './TerminalSearchBar';
 
 export interface TerminalViewProps {
-  paneId?: string; // 패인 ID (다중 패인 지원, 기본: 'pane-default')
+  paneId?: string;
   onData?: (data: string) => void;
-  onReady?: () => void; // 터미널 준비 완료 콜백
-  onSuggestion?: (suggestion: string) => void; // 프롬프트 제안 감지 콜백
-  onPtyOutput?: (data: string) => void; // PTY 출력 캡처 콜백 (응답 버퍼링용)
+  onReady?: () => void;
+  onSuggestion?: (suggestion: string) => void;
+  onPtyOutput?: (data: string) => void;
 }
 
-// Ghost text 패턴 감지 (Claude Code 프롬프트 제안)
-// - \x1b[2m ... \x1b[22m (dim text)
-// - \x1b[90m ... \x1b[39m (gray text)
+const GHOST_DIM = /\x1b\[2m([^\x1b]+)\x1b\[22m/;
+const GHOST_GRAY = /\x1b\[90m([^\x1b]+)\x1b\[39m/;
+const GHOST_BRIGHT_BLACK = /\x1b\[38;5;24[0-5]m([^\x1b]+)/;
+
 const extractGhostText = (data: string): string | null => {
-  // Dim text 패턴: \x1b[2m{text}\x1b[22m
-  const dimMatch = data.match(/\x1b\[2m([^\x1b]+)\x1b\[22m/);
-  if (dimMatch && dimMatch[1].trim()) {
-    return dimMatch[1].trim();
-  }
-
-  // Gray text 패턴: \x1b[90m{text}\x1b[39m
-  const grayMatch = data.match(/\x1b\[90m([^\x1b]+)\x1b\[39m/);
-  if (grayMatch && grayMatch[1].trim()) {
-    return grayMatch[1].trim();
-  }
-
-  // Bright black 패턴: \x1b[38;5;240m{text}
-  const brightBlackMatch = data.match(/\x1b\[38;5;24[0-5]m([^\x1b]+)/);
-  if (brightBlackMatch && brightBlackMatch[1].trim()) {
-    return brightBlackMatch[1].trim();
-  }
-
+  if (!data.includes('\x1b')) return null;
+  const dimMatch = data.match(GHOST_DIM);
+  if (dimMatch && dimMatch[1].trim()) return dimMatch[1].trim();
+  const grayMatch = data.match(GHOST_GRAY);
+  if (grayMatch && grayMatch[1].trim()) return grayMatch[1].trim();
+  const brightBlackMatch = data.match(GHOST_BRIGHT_BLACK);
+  if (brightBlackMatch && brightBlackMatch[1].trim()) return brightBlackMatch[1].trim();
   return null;
 };
 
 export function TerminalView({ paneId = 'pane-default', onData, onReady, onSuggestion, onPtyOutput }: TerminalViewProps) {
+  const [searchVisible, setSearchVisible] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
   const initializedRef = useRef(false);
   const disposedRef = useRef(false);
   const lastSuggestionRef = useRef<string>('');
   const onReadyCalledRef = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
   const { currentTheme } = useThemeStore();
   const currentThemeRef = useRef(currentTheme);
 
-  // 테마 ref 업데이트
   currentThemeRef.current = currentTheme;
 
   useEffect(() => {
@@ -63,6 +58,9 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
 
     let retryCount = 0;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let fitDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
     const initTerminal = () => {
       if (disposedRef.current) return;
 
@@ -73,7 +71,6 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
       }
       if (rect.width < 100 || rect.height < 100) {
         if (!disposedRef.current && retryCount < 300) {
-          // display:none → block 전환 시 크기가 바로 반영 안 될 수 있으므로 rAF + 타이머 병행
           retryTimeout = setTimeout(initTerminal, 100);
         }
         return;
@@ -88,17 +85,13 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           convertEol: true,
           fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
           fontSize: 13,
-          lineHeight: 1.2,
+          lineHeight: 1.4,
           cols: Math.floor(rect.width / 8),
-          rows: Math.floor(rect.height / 17),
-          allowProposedApi: true, // Unicode11 addon 사용을 위해 필요
-          // 키보드 입력 활성화 (중요!)
+          rows: Math.floor(rect.height / 20),
+          allowProposedApi: true,
           disableStdin: false,
-          // Windows ConPTY 호환성 설정
-          windowsPty: isWindows ? {
-            backend: 'conpty',
-            buildNumber: 18309 // Windows 10 1809+
-          } : undefined,
+          scrollback: 5000,
+          windowsPty: isWindows ? { backend: 'conpty', buildNumber: 18309 } : undefined,
           theme: {
             background: theme.terminal.background,
             foreground: theme.terminal.foreground,
@@ -129,150 +122,189 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         terminal.loadAddon(fitAddon);
         terminal.loadAddon(unicodeAddon);
         terminal.unicode.activeVersion = '11';
+
+        // SearchAddon 로드
+        const searchAddon = new SearchAddon();
+        terminal.loadAddon(searchAddon);
+        searchAddonRef.current = searchAddon;
+
         terminal.open(container);
+
+        // WebGL 렌더러 (성능 향상, 실패 시 Canvas 폴백)
+        try {
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            console.warn(`[TerminalView ${paneId}] WebGL context lost, falling back to canvas`);
+            webglAddon.dispose();
+          });
+          terminal.loadAddon(webglAddon);
+          console.log(`[TerminalView ${paneId}] WebGL renderer loaded`);
+        } catch (e) {
+          console.warn(`[TerminalView ${paneId}] WebGL not available, using canvas renderer`);
+        }
 
         terminalRef.current = terminal;
         fitAddonRef.current = fitAddon;
         initializedRef.current = true;
 
-        // 레지스트리에 등록 (복사 기능용)
         registerTerminal(paneId, terminal);
 
-        // fit 호출 및 PTY 리사이즈 (안전하게)
-        const safeFit = () => {
-          if (disposedRef.current || !terminalRef.current || !fitAddonRef.current) {
-            return;
-          }
+        // ─── fit 로직 (디바운스 + 스크롤 보존) ───
+        let lastCols = 0;
+        let lastRows = 0;
+
+        const doFit = () => {
+          if (disposedRef.current || !terminalRef.current || !fitAddonRef.current) return;
+
+          // display:none 상태에서는 fit 하지 않음 (비활성 탭)
+          const rect = container.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return;
+
           try {
+            const t = terminalRef.current;
+            // fit() 전: 스크롤 오프셋을 행 단위로 저장
+            // baseY = 완전 하단 시 viewport 시작 행, viewportY = 현재 viewport 시작 행
+            const wasAtBottom = t.buffer.active.baseY <= t.buffer.active.viewportY + 1;
+            const scrollOffset = wasAtBottom ? 0 : t.buffer.active.baseY - t.buffer.active.viewportY;
+
             fitAddonRef.current.fit();
-            // PTY에 터미널 크기 동기화 (paneId 포함)
-            if (window.api?.pty && terminalRef.current) {
-              window.api.pty.resize(terminalRef.current.cols, terminalRef.current.rows, paneId);
+
+            const { cols, rows } = t;
+            if (cols !== lastCols || rows !== lastRows) {
+              lastCols = cols;
+              lastRows = rows;
+              if (window.api?.pty) {
+                window.api.pty.resize(cols, rows, paneId);
+              }
             }
-          } catch (e) {
-            // ignore - terminal might be disposed
-          }
+
+            // fit() 후: 스크롤 위치 복원
+            if (wasAtBottom) {
+              // 하단에 있었으면 하단 유지
+              t.scrollToBottom();
+            } else if (scrollOffset > 0) {
+              // 위로 스크롤해서 보고 있었으면 — 하단에서의 오프셋 복원
+              const newTarget = Math.max(0, t.buffer.active.baseY - scrollOffset);
+              t.scrollToLine(newTarget);
+            }
+          } catch (e) { /* ignore */ }
         };
 
-        setTimeout(safeFit, 50);
+        // 디바운스: 연속 리사이즈 이벤트를 150ms 내 하나로 합침
+        const debouncedFit = () => {
+          if (fitDebounceTimer) clearTimeout(fitDebounceTimer);
+          fitDebounceTimer = setTimeout(doFit, 150);
+        };
 
-        // Cmd+C: 선택 텍스트 복사, 선택 없으면 Ctrl+C 전송
-        // Cmd+V: 클립보드에서 붙여넣기 → PTY로 전송
+        // 초기 fit (타이머 참조 보관 → 클린업 시 취소)
+        let initialFitTimer: ReturnType<typeof setTimeout> | null = setTimeout(doFit, 50);
+
+        // ─── ResizeObserver (컨테이너 크기 변경 감지) ───
+        resizeObserver = new ResizeObserver((entries) => {
+          if (disposedRef.current) return;
+          // contentRect가 0이면 display:none → 무시
+          const entry = entries[0];
+          if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+            debouncedFit();
+          }
+        });
+        resizeObserver.observe(container);
+
+        // ─── 키보드 핸들러 ───
         terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
           const isMeta = event.metaKey || event.ctrlKey;
+
+          // Cmd+F / Ctrl+F → 검색 바 토글
+          if (isMeta && event.key === 'f' && event.type === 'keydown') {
+            event.preventDefault();
+            setSearchVisible(prev => !prev);
+            return false;
+          }
 
           if (isMeta && event.key === 'c' && event.type === 'keydown') {
             const selection = terminal.getSelection();
             if (selection) {
               navigator.clipboard.writeText(selection).catch(() => {});
-              return false; // xterm에 \x03 전송 안 함
+              return false;
             }
-            // 선택 없으면 기본 동작 (Ctrl+C = \x03)
             return true;
           }
 
           if (isMeta && event.key === 'v' && event.type === 'keydown') {
             navigator.clipboard.readText().then((text) => {
-              if (text && onData && !disposedRef.current) {
-                onData(text);
-              }
+              if (text && onData && !disposedRef.current) onData(text);
             }).catch(() => {});
-            return false; // xterm 기본 처리 안 함
+            return false;
           }
 
-          // Cmd+=/+/- → 웹뷰 줌 통과 (xterm이 먹지 않도록)
+          // 줌 키는 웹뷰에 통과
           if (isMeta && (event.key === '=' || event.key === '+' || event.key === '-' || event.key === '0')) {
+            // 줌 변경 후 fit 재계산 (doFit 직접 호출 — debouncedFit의 추가 150ms 지연 방지)
+            setTimeout(doFit, 300);
             return false;
           }
 
           return true;
         });
 
-        // 사용자 입력 핸들러
+        // ─── 사용자 입력 ───
         if (onData) {
           terminal.onData((data) => {
-            if (!disposedRef.current) {
-              onData(data);
-            }
+            if (!disposedRef.current) onData(data);
           });
         }
 
-        // PTY 데이터 수신 연결 (paneId 필터링)
+        // ─── PTY 데이터 수신 ───
         let unsubscribe: (() => void) | undefined;
         if (window.api?.pty) {
           unsubscribe = window.api.pty.onData((receivedPaneId: string, data: string) => {
-            // paneId가 일치하는 데이터만 처리
             if (receivedPaneId !== paneId) return;
-
             if (!disposedRef.current && terminalRef.current) {
               try {
                 terminalRef.current.write(data);
 
-                // PTY 출력 캡처 (응답 버퍼링용)
-                if (onPtyOutput) {
-                  onPtyOutput(data);
-                }
+                if (onPtyOutput) onPtyOutput(data);
 
-                // Ghost text (프롬프트 제안) 감지
                 if (onSuggestion) {
                   const suggestion = extractGhostText(data);
                   if (suggestion && suggestion !== lastSuggestionRef.current) {
                     lastSuggestionRef.current = suggestion;
                     onSuggestion(suggestion);
-                  } else if (!suggestion && data.includes('\r') || data.includes('\n')) {
-                    // 줄바꿈 시 제안 초기화
+                  } else if (!suggestion && (data.includes('\r') || data.includes('\n'))) {
                     if (lastSuggestionRef.current) {
                       lastSuggestionRef.current = '';
                       onSuggestion('');
                     }
                   }
                 }
-              } catch (e) {
-                // ignore
-              }
+              } catch (e) { /* ignore */ }
             }
           });
         }
 
-        // 리사이즈 핸들러
-        const handleResize = () => {
-          if (!disposedRef.current) {
-            setTimeout(safeFit, 50);
-          }
-        };
-        window.addEventListener('resize', handleResize);
-
-        // 터미널 포커스 (키보드 입력 활성화)
         terminal.focus();
 
-        // 터미널 준비 완료 알림 (한 번만)
         if (onReady && !onReadyCalledRef.current) {
           onReadyCalledRef.current = true;
-          console.log('Terminal ready, calling onReady');
           onReady();
         }
 
-        // 클린업 함수 저장
-        (container as any)._cleanup = () => {
+        // ─── 클린업 ───
+        cleanupRef.current = () => {
           disposedRef.current = true;
           unregisterTerminal(paneId);
-          window.removeEventListener('resize', handleResize);
+          if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+          if (fitDebounceTimer) clearTimeout(fitDebounceTimer);
+          if (initialFitTimer) { clearTimeout(initialFitTimer); initialFitTimer = null; }
           if (unsubscribe) unsubscribe();
 
-          // 터미널 dispose 전 참조 정리
           const term = terminalRef.current;
           terminalRef.current = null;
           fitAddonRef.current = null;
+          searchAddonRef.current = null;
 
-          // 약간의 지연 후 dispose (pending tasks 완료 대기)
           setTimeout(() => {
-            try {
-              if (term) {
-                term.dispose();
-              }
-            } catch (e) {
-              // ignore
-            }
+            try { if (term) term.dispose(); } catch (e) { /* ignore */ }
           }, 100);
         };
       } catch (e) {
@@ -280,21 +312,19 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
       }
     };
 
-    // 초기화 시작
     setTimeout(initTerminal, 100);
 
     return () => {
       disposedRef.current = true;
       if (retryTimeout) clearTimeout(retryTimeout);
-      if ((container as any)?._cleanup) {
-        (container as any)._cleanup();
-      }
+      cleanupRef.current?.();
+      cleanupRef.current = null;
       initializedRef.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 테마 변경 시 터미널 테마 업데이트
+  // 테마 변경 시 업데이트
   useEffect(() => {
     if (terminalRef.current && currentTheme) {
       terminalRef.current.options.theme = {
@@ -323,28 +353,51 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
     }
   }, [currentTheme]);
 
-  // 터미널 클릭 시 포커스
   const handleClick = () => {
-    if (terminalRef.current) {
-      terminalRef.current.focus();
-    }
+    if (terminalRef.current) terminalRef.current.focus();
   };
 
+  const handleSearchNext = useCallback((query: string) => {
+    if (searchAddonRef.current && query) {
+      searchAddonRef.current.findNext(query);
+    }
+  }, []);
+
+  const handleSearchPrev = useCallback((query: string) => {
+    if (searchAddonRef.current && query) {
+      searchAddonRef.current.findPrevious(query);
+    }
+  }, []);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchVisible(false);
+    searchAddonRef.current?.clearDecorations();
+    if (terminalRef.current) terminalRef.current.focus();
+  }, []);
+
   return (
-    <div
-      ref={containerRef}
-      data-testid="terminal-container"
-      tabIndex={0}
-      onClick={handleClick}
-      onFocus={handleClick}
-      style={{
-        width: '100%',
-        height: '100%',
-        backgroundColor: currentTheme.terminal.background,
-        overflow: 'hidden',
-        cursor: 'text',
-        outline: 'none',
-      }}
-    />
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <TerminalSearchBar
+        visible={searchVisible}
+        onClose={handleSearchClose}
+        onSearchNext={handleSearchNext}
+        onSearchPrev={handleSearchPrev}
+      />
+      <div
+        ref={containerRef}
+        data-testid="terminal-container"
+        tabIndex={0}
+        onClick={handleClick}
+        onFocus={handleClick}
+        style={{
+          width: '100%',
+          height: '100%',
+          backgroundColor: currentTheme.terminal.background,
+          overflow: 'hidden',
+          cursor: 'text',
+          outline: 'none',
+        }}
+      />
+    </div>
   );
 }

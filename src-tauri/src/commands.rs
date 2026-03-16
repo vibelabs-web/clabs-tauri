@@ -661,6 +661,203 @@ pub fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Filesystem Context Commands
+// ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct FileTreeNode {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Option<Vec<FileTreeNode>>,
+}
+
+#[tauri::command]
+pub async fn fs_read_tree(path: String, max_depth: Option<u32>) -> Result<Vec<FileTreeNode>, String> {
+    let root = std::path::Path::new(&path);
+    if !root.exists() || !root.is_dir() {
+        return Err("유효하지 않은 디렉토리입니다".to_string());
+    }
+
+    let depth = max_depth.unwrap_or(3);
+    Ok(read_tree_recursive(root, 0, depth))
+}
+
+fn read_tree_recursive(dir: &std::path::Path, current_depth: u32, max_depth: u32) -> Vec<FileTreeNode> {
+    if current_depth >= max_depth {
+        return Vec::new();
+    }
+
+    let ignore_dirs = [".git", "node_modules", "target", ".next", "dist", "__pycache__", ".DS_Store"];
+
+    let mut entries: Vec<FileTreeNode> = Vec::new();
+
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        let mut items: Vec<_> = read_dir.flatten().collect();
+        items.sort_by(|a, b| {
+            let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            // 디렉토리 우선, 그 다음 이름순
+            b_is_dir.cmp(&a_is_dir).then_with(|| {
+                a.file_name().to_string_lossy().to_lowercase().cmp(
+                    &b.file_name().to_string_lossy().to_lowercase()
+                )
+            })
+        });
+
+        for entry in items {
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // 무시할 항목
+            if ignore_dirs.contains(&name.as_str()) || name.starts_with('.') {
+                continue;
+            }
+
+            let path = entry.path();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+            let children = if is_dir {
+                Some(read_tree_recursive(&path, current_depth + 1, max_depth))
+            } else {
+                None
+            };
+
+            entries.push(FileTreeNode {
+                name,
+                path: path.to_string_lossy().to_string(),
+                is_dir,
+                children,
+            });
+        }
+    }
+
+    entries
+}
+
+#[derive(Serialize)]
+pub struct FilePreview {
+    content: String,
+    total_lines: usize,
+    file_size: u64,
+    extension: String,
+}
+
+#[tauri::command]
+pub async fn fs_read_file_preview(path: String, max_lines: Option<usize>) -> Result<FilePreview, String> {
+    let file_path = std::path::Path::new(&path);
+    if !file_path.exists() || !file_path.is_file() {
+        return Err("파일을 찾을 수 없습니다".to_string());
+    }
+
+    let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+    let file_size = metadata.len();
+
+    // 너무 큰 파일은 거부 (5MB)
+    if file_size > 5_242_880 {
+        return Ok(FilePreview {
+            content: "(파일이 너무 큽니다)".to_string(),
+            total_lines: 0,
+            file_size,
+            extension: file_path.extension().unwrap_or_default().to_string_lossy().to_string(),
+        });
+    }
+
+    let content = fs::read_to_string(&path).map_err(|_| "바이너리 파일은 미리보기할 수 없습니다".to_string())?;
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+    let limit = max_lines.unwrap_or(100);
+    let preview = lines[..std::cmp::min(limit, total_lines)].join("\n");
+
+    Ok(FilePreview {
+        content: preview,
+        total_lines,
+        file_size,
+        extension: file_path.extension().unwrap_or_default().to_string_lossy().to_string(),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────
+// Filesystem Read/Write Commands
+// ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn fs_read_file(path: String) -> Result<String, String> {
+    let file_path = std::path::Path::new(&path);
+    if !file_path.exists() || !file_path.is_file() {
+        return Err("파일을 찾을 수 없습니다".to_string());
+    }
+
+    let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+    if metadata.len() > 5_242_880 {
+        return Err("파일이 너무 큽니다 (5MB 제한)".to_string());
+    }
+
+    fs::read_to_string(&path).map_err(|_| "바이너리 파일은 읽을 수 없습니다".to_string())
+}
+
+#[tauri::command]
+pub async fn fs_write_file(path: String, content: String) -> Result<(), String> {
+    let file_path = std::path::Path::new(&path);
+    if !file_path.exists() || !file_path.is_file() {
+        return Err("파일을 찾을 수 없습니다".to_string());
+    }
+
+    fs::write(&path, &content).map_err(|e| format!("파일 저장 실패: {}", e))
+}
+
+#[tauri::command]
+pub async fn fs_create_file(path: String) -> Result<(), String> {
+    let file_path = std::path::Path::new(&path);
+    if file_path.exists() {
+        return Err("이미 존재하는 파일입니다".to_string());
+    }
+
+    // 부모 디렉토리가 있는지 확인
+    if let Some(parent) = file_path.parent() {
+        if !parent.exists() {
+            return Err("부모 디렉토리가 존재하지 않습니다".to_string());
+        }
+    }
+
+    fs::write(&path, "").map_err(|e| format!("파일 생성 실패: {}", e))
+}
+
+#[tauri::command]
+pub async fn fs_create_dir(path: String) -> Result<(), String> {
+    let dir_path = std::path::Path::new(&path);
+    if dir_path.exists() {
+        return Err("이미 존재하는 디렉토리입니다".to_string());
+    }
+
+    if let Some(parent) = dir_path.parent() {
+        if !parent.exists() {
+            return Err("부모 디렉토리가 존재하지 않습니다".to_string());
+        }
+    }
+
+    fs::create_dir(&path).map_err(|e| format!("디렉토리 생성 실패: {}", e))
+}
+
+// ─────────────────────────────────────────────────────────────
+// File Watcher Commands
+// ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn file_watcher_start(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: String,
+) -> Result<(), String> {
+    state.file_watcher.start(&path, app)
+}
+
+#[tauri::command]
+pub async fn file_watcher_stop(state: State<'_, AppState>) -> Result<(), String> {
+    state.file_watcher.stop();
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 

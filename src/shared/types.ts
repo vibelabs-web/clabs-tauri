@@ -370,6 +370,17 @@ export interface IPCApi {
   };
   fs: {
     listDir: (path: string) => Promise<{ name: string; is_dir: boolean }[]>;
+    readTree: (path: string, maxDepth?: number) => Promise<any[]>;
+    readFilePreview: (path: string, maxLines?: number) => Promise<any>;
+    readFile: (path: string) => Promise<string>;
+    writeFile: (path: string, content: string) => Promise<void>;
+    createFile: (path: string) => Promise<void>;
+    createDir: (path: string) => Promise<void>;
+  };
+  fileWatcher: {
+    start: (path: string) => Promise<void>;
+    stop: () => Promise<void>;
+    onChanged: (callback: (change: { path: string; diff: string; change_type: string; timestamp: number }) => void) => () => void;
   };
 }
 

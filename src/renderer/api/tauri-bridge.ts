@@ -198,6 +198,26 @@ const api: IPCApi = {
 
   fs: {
     listDir: (path: string) => invoke('fs_list_dir', { path }) as Promise<{ name: string; is_dir: boolean }[]>,
+    readTree: (path: string, maxDepth?: number) =>
+      invoke('fs_read_tree', { path, maxDepth: maxDepth || 3 }) as Promise<any[]>,
+    readFilePreview: (path: string, maxLines?: number) =>
+      invoke('fs_read_file_preview', { path, maxLines: maxLines || 100 }) as Promise<any>,
+    readFile: (path: string) => invoke('fs_read_file', { path }) as Promise<string>,
+    writeFile: (path: string, content: string) => invoke('fs_write_file', { path, content }) as Promise<void>,
+    createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
+    createDir: (path: string) => invoke('fs_create_dir', { path }) as Promise<void>,
+  },
+
+  fileWatcher: {
+    start: (path: string) => invoke('file_watcher_start', { path }),
+    stop: () => invoke('file_watcher_stop'),
+    onChanged: (callback: (change: { path: string; diff: string; change_type: string; timestamp: number }) => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<{ path: string; diff: string; change_type: string; timestamp: number }>('file:changed', (event) => {
+        callback(event.payload);
+      }).then(fn => { unlisten = fn; });
+      return () => { unlisten?.(); };
+    },
   },
 };
 

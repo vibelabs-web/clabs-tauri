@@ -2,6 +2,7 @@
 // 복사 기능에서 터미널 버퍼 직접 접근용
 
 import type { Terminal } from 'xterm';
+import type { ConversationTurn } from '@renderer/types/timeline';
 
 const terminals = new Map<string, Terminal>();
 
@@ -317,6 +318,85 @@ function extToLang(ext: string): string {
     xml: 'xml', svg: 'xml',
   };
   return map[ext.toLowerCase()] || ext.toLowerCase();
+}
+
+/**
+ * 터미널 버퍼에서 모든 대화 턴 추출
+ */
+export function extractAllTurns(paneId: string): ConversationTurn[] {
+  const terminal = terminals.get(paneId);
+  if (!terminal) return [];
+
+  const buffer = terminal.buffer.active;
+  const totalLines = buffer.length;
+  const isPrompt = (line: string) => /^\s*❯\s/.test(line);
+
+  const turns: ConversationTurn[] = [];
+  let turnId = 0;
+
+  for (let i = 0; i < totalLines; i++) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+
+    if (isPrompt(text)) {
+      // 이전 어시스턴트 턴 종료
+      if (turns.length > 0 && turns[turns.length - 1].type === 'assistant') {
+        turns[turns.length - 1].endLine = i - 1;
+      }
+
+      // 사용자 턴 추가
+      const userText = text.replace(/^\s*❯\s*/, '').trim();
+      if (userText) {
+        turns.push({
+          id: turnId++,
+          type: 'user',
+          preview: userText.substring(0, 100),
+          startLine: i,
+          endLine: i,
+          timestamp: Date.now(),
+          paneId,
+        });
+
+        // 어시스턴트 턴 시작
+        turns.push({
+          id: turnId++,
+          type: 'assistant',
+          preview: '',
+          startLine: i + 1,
+          endLine: totalLines - 1,
+          timestamp: Date.now(),
+          paneId,
+        });
+      }
+    }
+  }
+
+  // 어시스턴트 턴 미리보기 텍스트 채우기
+  for (const turn of turns) {
+    if (turn.type === 'assistant' && turn.startLine < totalLines) {
+      const previewLines: string[] = [];
+      for (let j = turn.startLine; j <= Math.min(turn.startLine + 2, turn.endLine); j++) {
+        const line = buffer.getLine(j);
+        if (line) {
+          const text = line.translateToString(true).trim();
+          if (text) previewLines.push(text);
+        }
+      }
+      turn.preview = previewLines.join(' ').substring(0, 100) || '(응답 처리 중...)';
+    }
+  }
+
+  return turns;
+}
+
+/**
+ * 터미널을 특정 줄로 스크롤
+ */
+export function scrollToLine(paneId: string, line: number): void {
+  const terminal = terminals.get(paneId);
+  if (!terminal) return;
+  terminal.scrollToLine(Math.max(0, line));
 }
 
 /**

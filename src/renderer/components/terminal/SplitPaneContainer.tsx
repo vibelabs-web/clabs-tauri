@@ -19,6 +19,9 @@ export interface SplitPaneContainerProps {
   onSuggestion?: (suggestion: string) => void;
   onPtyOutput?: (data: string) => void;
   projectPath?: string;
+  onSwitchEditorTab?: (paneId: string, editorTabId: string) => void;
+  onCloseEditorTab?: (paneId: string, editorTabId: string) => void;
+  onEditorTabDirtyChange?: (paneId: string, editorTabId: string, isDirty: boolean) => void;
 }
 
 export function SplitPaneContainer({
@@ -35,6 +38,9 @@ export function SplitPaneContainer({
   onSuggestion,
   onPtyOutput,
   projectPath,
+  onSwitchEditorTab,
+  onCloseEditorTab,
+  onEditorTabDirtyChange,
 }: SplitPaneContainerProps) {
   // 훅은 반드시 조건문 전에 선언 (React Rules of Hooks)
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +73,9 @@ export function SplitPaneContainer({
         onSuggestion={onSuggestion}
         onPtyOutput={onPtyOutput}
         projectPath={projectPath}
+        onSwitchEditorTab={onSwitchEditorTab}
+        onCloseEditorTab={onCloseEditorTab}
+        onEditorTabDirtyChange={onEditorTabDirtyChange}
       />
     );
   }
@@ -85,6 +94,9 @@ export function SplitPaneContainer({
     onSuggestion,
     onPtyOutput,
     projectPath,
+    onSwitchEditorTab,
+    onCloseEditorTab,
+    onEditorTabDirtyChange,
   };
 
   const abs: React.CSSProperties = {

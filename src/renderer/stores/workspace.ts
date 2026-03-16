@@ -16,6 +16,7 @@ import {
   replaceNode,
   generatePaneId,
 } from '@shared/pane-types';
+import type { EditorTab } from '@shared/pane-types';
 
 const DEFAULT_PANE_ID_PREFIX = 'pane-default';
 
@@ -60,6 +61,12 @@ interface WorkspaceState {
   isPaneSpawned: (tabId: string, paneId: string) => boolean;
   getSpawnedPaneIds: (tabId: string) => Set<string>;
   clearSpawnedPanes: (tabId: string) => void;
+
+  // 에디터 탭
+  addEditorTab: (tabId: string, paneId: string, filePath: string) => void;
+  switchEditorTab: (tabId: string, paneId: string, editorTabId: string) => void;
+  closeEditorTab: (tabId: string, paneId: string, editorTabId: string) => void;
+  setEditorTabDirty: (tabId: string, paneId: string, editorTabId: string, isDirty: boolean) => void;
 
   // 유틸리티
   getTabByProject: (projectPath: string) => WorkspaceTab | null;
@@ -303,6 +310,125 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
     const newTabs = [...tabs];
     newTabs[tabIndex] = { ...tabs[tabIndex], spawnedPaneIds: new Set() };
+    set({ tabs: newTabs });
+  },
+
+  // --- 에디터 탭 ---
+
+  addEditorTab: (tabId: string, paneId: string, filePath: string) => {
+    const { tabs } = get();
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+
+    const tab = tabs[tabIndex];
+    const target = findNode(tab.paneRoot, paneId);
+    if (!target || target.type !== 'leaf') return;
+
+    const leaf = target as PaneLeaf;
+    const fileName = filePath.split('/').pop() || filePath;
+
+    // editorTabs 초기화 (없으면 터미널 탭 생성)
+    const currentTabs: EditorTab[] = leaf.editorTabs || [
+      { id: `${paneId}-terminal`, type: 'terminal', label: 'Terminal' },
+    ];
+
+    // 같은 파일이 이미 열려 있으면 해당 탭으로 전환
+    const existing = currentTabs.find(t => t.type === 'file' && t.filePath === filePath);
+    if (existing) {
+      const updated: PaneLeaf = { ...leaf, editorTabs: currentTabs, activeEditorTabId: existing.id };
+      const newTabs = [...tabs];
+      newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
+      set({ tabs: newTabs });
+      return;
+    }
+
+    const newEditorTab: EditorTab = {
+      id: `editor-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      type: 'file',
+      label: fileName,
+      filePath,
+    };
+
+    const updated: PaneLeaf = {
+      ...leaf,
+      editorTabs: [...currentTabs, newEditorTab],
+      activeEditorTabId: newEditorTab.id,
+    };
+    const newTabs = [...tabs];
+    newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
+    set({ tabs: newTabs });
+  },
+
+  switchEditorTab: (tabId: string, paneId: string, editorTabId: string) => {
+    const { tabs } = get();
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+
+    const tab = tabs[tabIndex];
+    const target = findNode(tab.paneRoot, paneId);
+    if (!target || target.type !== 'leaf') return;
+
+    const updated: PaneLeaf = { ...target, activeEditorTabId: editorTabId };
+    const newTabs = [...tabs];
+    newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
+    set({ tabs: newTabs });
+  },
+
+  closeEditorTab: (tabId: string, paneId: string, editorTabId: string) => {
+    const { tabs } = get();
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+
+    const tab = tabs[tabIndex];
+    const target = findNode(tab.paneRoot, paneId);
+    if (!target || target.type !== 'leaf') return;
+
+    const leaf = target as PaneLeaf;
+    if (!leaf.editorTabs) return;
+
+    // 터미널 탭은 닫을 수 없음
+    const closingTab = leaf.editorTabs.find(t => t.id === editorTabId);
+    if (!closingTab || closingTab.type === 'terminal') return;
+
+    const newEditorTabs = leaf.editorTabs.filter(t => t.id !== editorTabId);
+
+    // 활성 탭이 닫히면 터미널 탭으로 복귀
+    let newActiveId = leaf.activeEditorTabId;
+    if (newActiveId === editorTabId) {
+      const terminalTab = newEditorTabs.find(t => t.type === 'terminal');
+      newActiveId = terminalTab?.id || newEditorTabs[0]?.id;
+    }
+
+    // 파일 탭이 모두 닫히면 editorTabs 제거 (기본 상태로 복귀)
+    const hasFileTabs = newEditorTabs.some(t => t.type === 'file');
+    const updated: PaneLeaf = hasFileTabs
+      ? { ...leaf, editorTabs: newEditorTabs, activeEditorTabId: newActiveId }
+      : { ...leaf, editorTabs: undefined, activeEditorTabId: undefined };
+
+    const newTabs = [...tabs];
+    newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
+    set({ tabs: newTabs });
+  },
+
+  setEditorTabDirty: (tabId: string, paneId: string, editorTabId: string, isDirty: boolean) => {
+    const { tabs } = get();
+    const tabIndex = tabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+
+    const tab = tabs[tabIndex];
+    const target = findNode(tab.paneRoot, paneId);
+    if (!target || target.type !== 'leaf') return;
+
+    const leaf = target as PaneLeaf;
+    if (!leaf.editorTabs) return;
+
+    const newEditorTabs = leaf.editorTabs.map(t =>
+      t.id === editorTabId ? { ...t, isDirty } : t
+    );
+
+    const updated: PaneLeaf = { ...leaf, editorTabs: newEditorTabs };
+    const newTabs = [...tabs];
+    newTabs[tabIndex] = { ...tab, paneRoot: replaceNode(tab.paneRoot, paneId, updated) };
     set({ tabs: newTabs });
   },
 

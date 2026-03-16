@@ -2,10 +2,20 @@
 
 export type SplitDirection = 'horizontal' | 'vertical';
 
+export interface EditorTab {
+  id: string;
+  type: 'terminal' | 'file';
+  label: string;
+  filePath?: string; // type === 'file'일 때
+  isDirty?: boolean;
+}
+
 export interface PaneLeaf {
   type: 'leaf';
   id: string;
   name: string;
+  editorTabs?: EditorTab[];
+  activeEditorTabId?: string;
 }
 
 export interface PaneSplit {

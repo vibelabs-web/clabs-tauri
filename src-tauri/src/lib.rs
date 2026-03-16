@@ -5,9 +5,11 @@ mod session;
 mod setup;
 mod skills;
 mod stores;
+mod file_watcher;
 mod usage_api;
 
 use commands::{load_command_history, load_projects, CommandHistoryEntry};
+use file_watcher::FileWatcherManager;
 use pty::PtyPoolManager;
 use session::SessionWatcher;
 use setup::SetupService;
@@ -26,6 +28,7 @@ pub struct AppState {
     pub setup_service: SetupService,
     pub projects_store: Mutex<Vec<serde_json::Value>>,
     pub command_history: Mutex<Vec<CommandHistoryEntry>>,
+    pub file_watcher: FileWatcherManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,6 +69,7 @@ pub fn run() {
                 setup_service,
                 projects_store: Mutex::new(load_projects()),
                 command_history: Mutex::new(load_command_history()),
+                file_watcher: FileWatcherManager::new(),
             };
 
             app.manage(state);
@@ -143,6 +147,16 @@ pub fn run() {
             // Filesystem & PTY CWD
             commands::fs_list_dir,
             commands::pty_get_cwd,
+            // Filesystem Context
+            commands::fs_read_tree,
+            commands::fs_read_file_preview,
+            commands::fs_read_file,
+            commands::fs_write_file,
+            commands::fs_create_file,
+            commands::fs_create_dir,
+            // File Watcher
+            commands::file_watcher_start,
+            commands::file_watcher_stop,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -150,6 +164,7 @@ pub fn run() {
                 if let Some(state) = app.try_state::<AppState>() {
                     log::info!("Window destroyed, cleaning up...");
                     state.session_watcher.stop();
+                    state.file_watcher.stop();
                     state.pty_pool.kill_all();
                 }
             }
