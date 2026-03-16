@@ -297,6 +297,7 @@ export interface IPCApi {
     resize: (cols: number, rows: number, paneId?: string) => void;
     kill: (paneId?: string) => void;
     killAll: () => void;
+    getCwd: (paneId: string) => Promise<string>;
     startClaude: (cwd: string) => Promise<{ success: boolean }>;
     onData: (callback: (paneId: string, data: string) => void) => () => void;
     onExit: (callback: (paneId: string, code: number) => void) => () => void;
@@ -366,6 +367,9 @@ export interface IPCApi {
     add: (command: string) => Promise<void>;
     remove: (command: string) => Promise<void>;
     clear: () => Promise<void>;
+  };
+  fs: {
+    listDir: (path: string) => Promise<{ name: string; is_dir: boolean }[]>;
   };
 }
 

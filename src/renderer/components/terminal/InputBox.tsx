@@ -1,12 +1,21 @@
 // @TASK P2-S2-T1 - 한글 조합 지원 입력창 컴포넌트
 
-import { useRef, useEffect, useState, useMemo, KeyboardEvent, CompositionEvent, ChangeEvent } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback, KeyboardEvent, CompositionEvent, ChangeEvent } from 'react';
 import { BUILTIN_COMMANDS } from '@shared/claude-cli';
 import type { CommandHistoryEntry } from '@shared/claude-cli';
 
 // ─────────────────────────────────────────────────────────────
-// 슬래시 명령어 타입 (드롭다운용)
+// 드롭다운 아이템 타입 (통합)
 // ─────────────────────────────────────────────────────────────
+
+interface DropdownItem {
+  label: string;
+  description?: string;
+  value: string; // 선택 시 입력값에 설정될 텍스트
+  icon?: 'slash-builtin' | 'slash-skill' | 'folder' | 'file' | 'history';
+}
+
+type DropdownMode = 'slash' | 'path' | 'history' | null;
 
 interface SlashCommand {
   command: string;
@@ -14,7 +23,6 @@ interface SlashCommand {
   type: 'builtin' | 'skill';
 }
 
-// BUILTIN_COMMANDS에 type 필드 추가
 const BUILTIN_SLASH_COMMANDS: SlashCommand[] = BUILTIN_COMMANDS.map(cmd => ({
   ...cmd,
   type: 'builtin' as const,
@@ -27,12 +35,10 @@ export interface InputBoxProps {
   disabled?: boolean;
   placeholder?: string;
   suggestion?: string;
-  /** 스킬팩 명령어 목록 (외부에서 전달) */
   skillCommands?: { command: string; description: string }[];
-  /** ESC 키 핸들러 (Claude Code 중단 등) */
   onEscape?: () => void;
-  /** 방향키/엔터를 PTY로 직접 전달 (AskUserQuestion 지원) */
   onRawKey?: (key: string) => void;
+  activePaneId?: string;
 }
 
 export function InputBox({
@@ -44,22 +50,24 @@ export function InputBox({
   suggestion,
   skillCommands = [],
   onEscape,
-  onRawKey
+  onRawKey,
+  activePaneId,
 }: InputBoxProps) {
   const isComposingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [showDropdown, setShowDropdown] = useState(false);
+  // 통합 드롭다운 상태
+  const [dropdownMode, setDropdownMode] = useState<DropdownMode>(null);
+  const [dropdownItems, setDropdownItems] = useState<DropdownItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [filteredCommands, setFilteredCommands] = useState<SlashCommand[]>([]);
 
-  // 명령어 히스토리 상태
+  // 경로 완성용: 원래 입력값의 접두사 (드롭다운 선택 시 조합용)
+  const pathPrefixRef = useRef('');
+
+  // 명령어 히스토리
   const [historyList, setHistoryList] = useState<CommandHistoryEntry[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const savedInputRef = useRef('');
 
-  // 히스토리 로드
   useEffect(() => {
     const loadHistory = async () => {
       try {
@@ -67,37 +75,42 @@ export function InputBox({
           const history = await window.api.commandHistory.list();
           setHistoryList(history);
         }
-      } catch {
-        // 히스토리 로드 실패 시 무시
-      }
+      } catch { /* ignore */ }
     };
     loadHistory();
   }, []);
 
-  // 모든 명령어 합치기 (스킬 + 기본) - 중복 제거, 스킬 우선
+  // 슬래시 명령어 통합
   const allCommands = useMemo<SlashCommand[]>(() => {
     const skillCmds = skillCommands.map(s => ({ ...s, type: 'skill' as const }));
     const skillCommandSet = new Set(skillCmds.map(s => s.command));
-    // 스킬과 중복되지 않는 기본 명령어만 포함
     const uniqueBuiltins = BUILTIN_SLASH_COMMANDS.filter(cmd => !skillCommandSet.has(cmd.command));
     return [...skillCmds, ...uniqueBuiltins];
   }, [skillCommands]);
 
-  // 입력값이 "/" 로 시작하면 명령어 필터링
+  // "/" 입력 시 슬래시 명령어 드롭다운
   useEffect(() => {
     if (value.startsWith('/')) {
       const query = value.toLowerCase();
       const filtered = allCommands.filter(cmd =>
         cmd.command.toLowerCase().startsWith(query)
       );
-      setFilteredCommands(filtered);
-      setShowDropdown(filtered.length > 0 && value !== filtered[0]?.command);
-      setSelectedIndex(0);
-    } else {
-      setShowDropdown(false);
-      setFilteredCommands([]);
+      if (filtered.length > 0 && value !== filtered[0]?.command) {
+        setDropdownItems(filtered.map(cmd => ({
+          label: cmd.command,
+          description: cmd.description,
+          value: cmd.command + ' ',
+          icon: cmd.type === 'builtin' ? 'slash-builtin' : 'slash-skill',
+        })));
+        setDropdownMode('slash');
+        setSelectedIndex(0);
+      } else {
+        closeDropdown();
+      }
+    } else if (dropdownMode === 'slash') {
+      closeDropdown();
     }
-  }, [value, skillCommands]);
+  }, [value, allCommands]);
 
   // 외부에서 value가 변경되면 포커스
   useEffect(() => {
@@ -106,45 +119,151 @@ export function InputBox({
     }
   }, [value]);
 
-  // 클릭 외부 감지로 드롭다운 닫기
+  // 클릭 외부 감지
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
+        closeDropdown();
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleCompositionStart = (_e: CompositionEvent<HTMLTextAreaElement>) => {
-    isComposingRef.current = true;
-  };
+  const closeDropdown = useCallback(() => {
+    setDropdownMode(null);
+    setDropdownItems([]);
+    setSelectedIndex(0);
+  }, []);
 
-  const handleCompositionEnd = (_e: CompositionEvent<HTMLTextAreaElement>) => {
-    isComposingRef.current = false;
-  };
+  const selectItem = useCallback((item: DropdownItem) => {
+    onChange(item.value);
+    closeDropdown();
+    textareaRef.current?.focus();
+  }, [onChange, closeDropdown]);
+
+  const handleCompositionStart = () => { isComposingRef.current = true; };
+  const handleCompositionEnd = () => { isComposingRef.current = false; };
 
   const handleChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value);
-    // 입력이 변경되면 히스토리 인덱스 초기화
-    setHistoryIndex(-1);
   };
 
-  const selectCommand = (command: string) => {
-    onChange(command + ' ');
-    setShowDropdown(false);
-    textareaRef.current?.focus();
-  };
+  // ─────────────────────────────────────────────────────────────
+  // 경로 탭 자동완성
+  // ─────────────────────────────────────────────────────────────
+  const handlePathCompletion = useCallback(async () => {
+    if (!window.api?.pty?.getCwd || !window.api?.fs?.listDir) return;
 
+    const parts = value.split(/\s+/);
+    const lastToken = parts[parts.length - 1] || '';
+    const cmdPrefix = parts.slice(0, -1).join(' ');
+
+    const lastSlash = lastToken.lastIndexOf('/');
+    let searchDir: string;
+    let filePrefix: string;
+    let tokenBase: string;
+
+    const paneId = activePaneId || 'pane-default';
+    let cwd: string;
+    try {
+      cwd = await window.api.pty.getCwd(paneId);
+    } catch { return; }
+
+    if (lastSlash >= 0) {
+      const dirPart = lastToken.substring(0, lastSlash) || '/';
+      filePrefix = lastToken.substring(lastSlash + 1);
+      tokenBase = lastToken.substring(0, lastSlash + 1);
+      searchDir = dirPart.startsWith('/') ? dirPart : `${cwd}/${dirPart}`;
+    } else {
+      searchDir = cwd;
+      filePrefix = lastToken;
+      tokenBase = '';
+    }
+
+    if (!filePrefix) return;
+
+    try {
+      const entries = await window.api.fs.listDir(searchDir);
+      const matches = entries.filter(e =>
+        e.name.toLowerCase().startsWith(filePrefix.toLowerCase())
+      );
+
+      if (matches.length === 1) {
+        // 유일한 매치 → 즉시 완성
+        const m = matches[0];
+        const completed = m.name + (m.is_dir ? '/' : ' ');
+        const newValue = cmdPrefix
+          ? `${cmdPrefix} ${tokenBase}${completed}`
+          : `${tokenBase}${completed}`;
+        onChange(newValue);
+      } else if (matches.length > 1) {
+        // 공통 접두사 완성
+        let common = matches[0].name;
+        for (let i = 1; i < matches.length; i++) {
+          const name = matches[i].name;
+          let j = 0;
+          while (j < common.length && j < name.length && common[j].toLowerCase() === name[j].toLowerCase()) j++;
+          common = common.substring(0, j);
+        }
+        if (common.length > filePrefix.length) {
+          const newValue = cmdPrefix
+            ? `${cmdPrefix} ${tokenBase}${common}`
+            : `${tokenBase}${common}`;
+          onChange(newValue);
+        }
+
+        // 드롭다운에 매치 목록 표시
+        pathPrefixRef.current = cmdPrefix ? `${cmdPrefix} ${tokenBase}` : tokenBase;
+        setDropdownItems(matches.map(m => ({
+          label: m.name,
+          description: m.is_dir ? '폴더' : '파일',
+          value: `${pathPrefixRef.current}${m.name}${m.is_dir ? '/' : ' '}`,
+          icon: m.is_dir ? 'folder' : 'file',
+        })));
+        setDropdownMode('path');
+        setSelectedIndex(0);
+      }
+    } catch { /* ignore */ }
+  }, [value, activePaneId, onChange]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 히스토리 드롭다운 열기
+  // ─────────────────────────────────────────────────────────────
+  const openHistoryDropdown = useCallback(() => {
+    if (historyList.length === 0) return;
+
+    // 중복 제거 (최근 것만 유지)
+    const seen = new Set<string>();
+    const unique: CommandHistoryEntry[] = [];
+    for (const entry of historyList) {
+      if (!seen.has(entry.command)) {
+        seen.add(entry.command);
+        unique.push(entry);
+      }
+    }
+
+    setDropdownItems(unique.slice(0, 20).map(entry => ({
+      label: entry.command,
+      description: formatTimeAgo(entry.timestamp),
+      value: entry.command,
+      icon: 'history',
+    })));
+    setDropdownMode('history');
+    setSelectedIndex(0);
+  }, [historyList]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 키보드 핸들러
+  // ─────────────────────────────────────────────────────────────
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
 
-    // 드롭다운 열려있을 때 키보드 네비게이션
-    if (showDropdown && filteredCommands.length > 0) {
+    // 드롭다운 열려있을 때 네비게이션
+    if (dropdownMode && dropdownItems.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIndex(prev => Math.min(prev + 1, filteredCommands.length - 1));
+        setSelectedIndex(prev => Math.min(prev + 1, dropdownItems.length - 1));
         return;
       }
       if (e.key === 'ArrowUp') {
@@ -154,156 +273,174 @@ export function InputBox({
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault();
-        selectCommand(filteredCommands[selectedIndex].command);
+        selectItem(dropdownItems[selectedIndex]);
         return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        setShowDropdown(false);
+        closeDropdown();
         return;
       }
     }
 
-    // ESC 키: 드롭다운이 닫혀있을 때 PTY로 전달 (Claude Code 중단)
-    if (e.key === 'Escape' && !showDropdown && onEscape) {
+    // ESC 키: PTY에 전달
+    if (e.key === 'Escape' && !dropdownMode && onEscape) {
       e.preventDefault();
       onEscape();
       return;
     }
 
-    // 입력값이 비어있을 때 Up/Down arrow로 히스토리 리콜
-    if (!value && !showDropdown && historyList.length > 0) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (historyIndex === -1) {
-          // 처음 Up: 현재 입력 저장 후 히스토리 첫 번째 항목
-          savedInputRef.current = value;
-          setHistoryIndex(0);
-          onChange(historyList[0].command);
-        } else if (historyIndex < historyList.length - 1) {
-          // 다음 히스토리 항목
-          const newIndex = historyIndex + 1;
-          setHistoryIndex(newIndex);
-          onChange(historyList[newIndex].command);
-        }
-        return;
-      }
-    }
-
-    // 히스토리 탐색 중 Down arrow
-    if (historyIndex >= 0 && e.key === 'ArrowDown') {
+    // 위쪽 화살표: 히스토리 드롭다운 열기
+    if (e.key === 'ArrowUp' && !dropdownMode) {
       e.preventDefault();
-      if (historyIndex > 0) {
-        const newIndex = historyIndex - 1;
-        setHistoryIndex(newIndex);
-        onChange(historyList[newIndex].command);
-      } else {
-        // 히스토리 끝 → 원래 입력 복원
-        setHistoryIndex(-1);
-        onChange(savedInputRef.current);
-      }
+      openHistoryDropdown();
       return;
     }
 
-    // 히스토리 탐색 중 Up arrow (value가 있는 경우)
-    if (historyIndex >= 0 && e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (historyIndex < historyList.length - 1) {
-        const newIndex = historyIndex + 1;
-        setHistoryIndex(newIndex);
-        onChange(historyList[newIndex].command);
-      }
-      return;
-    }
-
-    // 입력값이 비어있을 때 방향키/엔터를 PTY로 직접 전달 (AskUserQuestion 지원)
-    // 히스토리 탐색 중이 아닐 때만
-    if (!value && !showDropdown && onRawKey && historyIndex === -1) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        onRawKey('\x1b[A'); // ESC [ A
-        return;
-      }
+    // 입력값이 비어있을 때 방향키/엔터를 PTY로 직접 전달
+    if (!value && !dropdownMode && onRawKey) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        onRawKey('\x1b[B'); // ESC [ B
+        onRawKey('\x1b[B');
         return;
       }
       if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
         e.preventDefault();
-        onRawKey('\r'); // Carriage return
+        onRawKey('\r');
         return;
       }
     }
 
-    // Tab 키로 제안 수락
-    if (e.key === 'Tab' && suggestion && !value) {
+    // Tab 키
+    if (e.key === 'Tab') {
       e.preventDefault();
-      onChange(suggestion);
+      if (suggestion) {
+        onChange(suggestion);
+      } else if (value && !value.startsWith('/')) {
+        handlePathCompletion();
+      }
       return;
     }
 
     if (e.key === 'Enter') {
       if (e.shiftKey) return;
       if (isComposingRef.current) return;
-
       e.preventDefault();
       handleSubmitClick();
     }
   };
 
   const handleSubmitClick = () => {
-    console.log('[InputBox] handleSubmitClick called, disabled:', disabled, 'value:', value);
-
-    if (disabled) {
-      console.log('[InputBox] Input is disabled, ignoring');
-      return;
-    }
-
+    if (disabled) return;
     const trimmedText = value.trim();
-    if (trimmedText === '') {
-      console.log('[InputBox] Empty text, ignoring');
-      return;
-    }
+    if (trimmedText === '') return;
 
-    console.log('[InputBox] Calling onSubmit with:', trimmedText);
     onSubmit(trimmedText);
     onChange('');
-    setShowDropdown(false);
-    setHistoryIndex(-1);
+    closeDropdown();
+
+    // 히스토리 새로고침
+    if (window.api?.commandHistory?.list) {
+      window.api.commandHistory.list().then(setHistoryList).catch(() => {});
+    }
   };
 
   const canSubmit = !disabled && value.trim() !== '';
-
-  // 제안 표시 여부 (입력값이 없고 제안이 있을 때)
   const showSuggestion = !value && suggestion;
+
+  // 확장 모달 상태
+  const [showExpandModal, setShowExpandModal] = useState(false);
+  const [expandedValue, setExpandedValue] = useState('');
+  const expandTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleOpenExpand = useCallback(() => {
+    setExpandedValue(value);
+    setShowExpandModal(true);
+    setTimeout(() => expandTextareaRef.current?.focus(), 100);
+  }, [value]);
+
+  const handleExpandSubmit = useCallback(() => {
+    const trimmed = expandedValue.trim();
+    if (!trimmed || disabled) return;
+    onSubmit(trimmed);
+    onChange('');
+    setShowExpandModal(false);
+    setExpandedValue('');
+  }, [expandedValue, disabled, onSubmit, onChange]);
+
+  const handleExpandKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onChange(expandedValue);
+      setShowExpandModal(false);
+      return;
+    }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleExpandSubmit();
+    }
+  }, [expandedValue, onChange, handleExpandSubmit]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 드롭다운 아이콘
+  // ─────────────────────────────────────────────────────────────
+  const renderIcon = (icon?: DropdownItem['icon']) => {
+    switch (icon) {
+      case 'folder':
+        return (
+          <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+        );
+      case 'file':
+        return (
+          <svg className="w-4 h-4 text-text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        );
+      case 'history':
+        return (
+          <svg className="w-4 h-4 text-text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
+      case 'slash-builtin':
+        return <span className="w-4 text-center text-blue-400 text-xs font-bold flex-shrink-0">/</span>;
+      case 'slash-skill':
+        return <span className="w-4 text-center text-accent text-xs font-bold flex-shrink-0">/</span>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="flex items-end gap-2">
       <div className="flex-1 relative" ref={dropdownRef}>
-        {/* 슬래시 명령어 드롭다운 */}
-        {showDropdown && (
-          <div className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto bg-bg-tertiary border border-border-default rounded-lg shadow-lg z-50">
-            {filteredCommands.map((cmd, index) => (
+        {/* 통합 드롭다운 */}
+        {dropdownMode && dropdownItems.length > 0 && (
+          <div className="absolute bottom-full left-0 right-0 mb-1 max-h-72 overflow-y-auto bg-bg-tertiary border border-border-default rounded-lg shadow-lg z-50">
+            {/* 헤더 */}
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-text-muted border-b border-border-default sticky top-0 bg-bg-tertiary">
+              {dropdownMode === 'slash' && '명령어'}
+              {dropdownMode === 'path' && '경로 자동완성'}
+              {dropdownMode === 'history' && '명령어 기록'}
+            </div>
+            {dropdownItems.map((item, index) => (
               <button
-                key={`${cmd.type}-${cmd.command}`}
+                key={`${dropdownMode}-${index}`}
                 type="button"
-                onClick={() => selectCommand(cmd.command)}
-                className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-bg-hover transition-colors ${
+                onClick={() => selectItem(item)}
+                className={`w-full text-left px-3 py-2 flex items-center gap-2.5 hover:bg-bg-hover transition-colors ${
                   index === selectedIndex ? 'bg-bg-hover' : ''
                 }`}
               >
-                <span className={`font-mono text-sm font-semibold ${
-                  cmd.type === 'builtin' ? 'text-blue-400' : 'text-accent'
-                }`}>
-                  {cmd.command}
+                {renderIcon(item.icon)}
+                <span className="font-mono text-sm text-text-primary truncate">
+                  {item.label}
                 </span>
-                <span className="text-xs text-text-secondary truncate">
-                  {cmd.description}
-                </span>
-                {cmd.type === 'builtin' && (
-                  <span className="ml-auto text-xs text-blue-400/50 px-1.5 py-0.5 bg-blue-400/10 rounded">
-                    기본
+                {item.description && (
+                  <span className="ml-auto text-xs text-text-muted truncate flex-shrink-0">
+                    {item.description}
                   </span>
                 )}
               </button>
@@ -329,10 +466,26 @@ export function InputBox({
           disabled={disabled}
           placeholder={showSuggestion ? '' : placeholder}
           aria-label="명령어 입력창"
-          className="w-full min-h-[40px] max-h-[120px] px-3 py-2 bg-bg-secondary border border-border-default rounded-lg text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent/50 disabled:opacity-50 disabled:cursor-not-allowed resize-none font-mono text-sm transition-colors duration-200"
+          className="w-full min-h-[40px] max-h-[120px] px-3 py-2 pr-10 bg-bg-secondary border border-border-default rounded-lg text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent/50 disabled:opacity-50 disabled:cursor-not-allowed resize-none font-mono text-sm transition-colors duration-200"
           style={{ background: 'transparent' }}
           rows={1}
         />
+        {/* 확장 버튼 */}
+        <button
+          type="button"
+          onClick={handleOpenExpand}
+          disabled={disabled}
+          aria-label="입력창 확장"
+          title="입력창 확장 (긴 텍스트 입력)"
+          className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-30"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 3 21 3 21 9" />
+            <polyline points="9 21 3 21 3 15" />
+            <line x1="21" y1="3" x2="14" y2="10" />
+            <line x1="3" y1="21" x2="10" y2="14" />
+          </svg>
+        </button>
       </div>
       <button
         type="button"
@@ -347,14 +500,77 @@ export function InputBox({
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
         </svg>
       </button>
+
+      {/* 확장 입력 모달 */}
+      {showExpandModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => { onChange(expandedValue); setShowExpandModal(false); }}
+          />
+          <div className="relative w-full max-w-2xl mx-4 bg-bg-secondary rounded-xl shadow-xl border border-bg-tertiary overflow-hidden">
+            <div className="px-4 py-3 border-b border-bg-tertiary flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+                <span className="text-sm font-medium text-text-primary">확장 입력</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-text-muted">
+                  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Enter로 전송 · ESC로 닫기
+                </span>
+                <button
+                  onClick={() => { onChange(expandedValue); setShowExpandModal(false); }}
+                  className="w-6 h-6 flex items-center justify-center rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="p-4">
+              <textarea
+                ref={expandTextareaRef}
+                value={expandedValue}
+                onChange={(e) => setExpandedValue(e.target.value)}
+                onKeyDown={handleExpandKeyDown}
+                placeholder="긴 명령어나 프롬프트를 입력하세요..."
+                className="w-full h-64 px-4 py-3 bg-bg-primary border border-border-default rounded-lg text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent/50 resize-none font-mono text-sm leading-relaxed"
+                autoFocus
+              />
+            </div>
+            <div className="px-4 py-3 border-t border-bg-tertiary flex items-center justify-between">
+              <span className="text-xs text-text-muted">{expandedValue.length}자</span>
+              <button
+                onClick={handleExpandSubmit}
+                disabled={!expandedValue.trim() || disabled}
+                className="px-4 py-2 bg-accent hover:bg-accent/80 disabled:bg-bg-tertiary disabled:cursor-not-allowed rounded-lg text-sm font-medium text-bg-primary transition-colors"
+              >
+                전송
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// 상대 시간 포맷
+function formatTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const min = Math.floor(diff / 60000);
+  const hr = Math.floor(diff / 3600000);
+  const day = Math.floor(diff / 86400000);
+  if (min < 1) return '방금';
+  if (min < 60) return `${min}분 전`;
+  if (hr < 24) return `${hr}시간 전`;
+  return `${day}일 전`;
 }

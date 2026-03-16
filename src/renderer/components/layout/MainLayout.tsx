@@ -12,6 +12,7 @@ import type { WorkflowStep, Recommendation } from '@renderer/types/skill-panel';
 import type { PaneNode, SplitDirection } from '@shared/pane-types';
 import { getAllLeaves } from '@shared/pane-types';
 import { getTerminalTextForCopy } from '@renderer/utils/terminal-registry';
+import type { WorkspaceTab } from '@renderer/stores/workspace';
 
 export interface MainLayoutProps {
   usage: UsageData;
@@ -41,6 +42,12 @@ export interface MainLayoutProps {
   onClosePane?: (paneId: string) => void;
   onRenamePane?: (paneId: string, name: string) => void;
   onSplitResize?: (splitId: string, newRatio: number) => void;
+  // 멀티탭 props
+  tabs?: WorkspaceTab[];
+  activeTabId?: string;
+  onTabSwitch?: (tabId: string) => void;
+  onTabClose?: (tabId: string) => void;
+  onTabAdd?: () => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -74,6 +81,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   onClosePane,
   onRenamePane,
   onSplitResize,
+  // 멀티탭
+  tabs,
+  activeTabId: activeWorkspaceTabId,
+  onTabSwitch,
+  onTabClose,
+  onTabAdd,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -170,7 +183,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({
       data-testid="main-layout"
       className="flex flex-col h-screen bg-bg-primary overflow-hidden"
     >
-      <TitleBar projectName={projectName} onProjectClick={onProjectClick} />
+      <TitleBar
+        projectName={projectName}
+        onProjectClick={onProjectClick}
+        tabs={tabs}
+        activeTabId={activeWorkspaceTabId}
+        onTabSwitch={onTabSwitch}
+        onTabClose={onTabClose}
+        onTabAdd={onTabAdd}
+      />
       <ToolbarBar onExecute={handleToolbarExecute} />
 
       <div ref={containerRef} className="flex flex-1 overflow-hidden">
@@ -195,7 +216,36 @@ const MainLayout: React.FC<MainLayoutProps> = ({
 
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <div className="flex-1 overflow-hidden" style={{ position: 'relative' }}>
-            {paneTree && onPaneReady && onPaneClick && onSplit && onClosePane && onRenamePane && onSplitResize ? (
+            {/* 멀티탭: 모든 탭의 터미널을 동시 렌더링, 비활성 탭은 display:none으로 숨김 (PTY 유지) */}
+            {tabs && tabs.length > 0 && onPaneReady && onPaneClick && onSplit && onClosePane && onRenamePane && onSplitResize ? (
+              tabs.map((tab) => {
+                const isActive = tab.id === activeWorkspaceTabId;
+                const tabLeaves = getAllLeaves(tab.paneRoot).length;
+                return (
+                  <div
+                    key={tab.id}
+                    className="h-full w-full"
+                    style={{ display: isActive ? 'block' : 'none', position: 'absolute', inset: 0 }}
+                  >
+                    <SplitPaneContainer
+                      node={tab.paneRoot}
+                      activePaneId={tab.activePaneId}
+                      totalLeaves={tabLeaves}
+                      onPaneClick={onPaneClick}
+                      onSplit={onSplit}
+                      onClose={onClosePane}
+                      onRename={onRenamePane}
+                      onPaneReady={onPaneReady}
+                      onSplitResize={onSplitResize}
+                      onData={onData}
+                      onSuggestion={onSuggestion}
+                      onPtyOutput={onPtyOutput}
+                      projectPath={tab.project.path}
+                    />
+                  </div>
+                );
+              })
+            ) : paneTree && onPaneReady && onPaneClick && onSplit && onClosePane && onRenamePane && onSplitResize ? (
               <SplitPaneContainer
                 node={paneTree}
                 activePaneId={activePaneId || 'pane-default'}
@@ -212,7 +262,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                 projectPath={projectPath}
               />
             ) : (
-              // 후방호환: paneTree가 없으면 레거시 단일 터미널 (import 불필요 - SplitPaneContainer가 리프 처리)
               <div className="h-full w-full flex items-center justify-center text-text-secondary">
                 터미널 로딩 중...
               </div>
@@ -232,6 +281,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                   skillCommands={skillCommands}
                   onEscape={onEscape}
                   onRawKey={onData}
+                  activePaneId={activePaneId}
                 />
               </div>
               <button

@@ -36,6 +36,8 @@ const api: IPCApi = {
       invoke('pty_kill_all').catch(() => {});
     },
 
+    getCwd: (paneId: string) => invoke('pty_get_cwd', { paneId }) as Promise<string>,
+
     startClaude: (cwd: string) =>
       invoke('pty_start_claude', { cwd }),
 
@@ -192,6 +194,10 @@ const api: IPCApi = {
     add: (command: string) => invoke('command_history_add', { command }) as Promise<void>,
     remove: (command: string) => invoke('command_history_remove', { command }) as Promise<void>,
     clear: () => invoke('command_history_clear') as Promise<void>,
+  },
+
+  fs: {
+    listDir: (path: string) => invoke('fs_list_dir', { path }) as Promise<{ name: string; is_dir: boolean }[]>,
   },
 };
 

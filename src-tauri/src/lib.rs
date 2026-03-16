@@ -140,6 +140,9 @@ pub fn run() {
             commands::command_history_add,
             commands::command_history_remove,
             commands::command_history_clear,
+            // Filesystem & PTY CWD
+            commands::fs_list_dir,
+            commands::pty_get_cwd,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

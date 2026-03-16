@@ -10,3 +10,4 @@ export { useThemeStore } from './theme';
 export { useProjectStore } from './project';
 export { usePaneStore } from './pane';
 export { useToolbarStore } from './toolbar';
+export { useWorkspaceStore } from './workspace';

@@ -25,6 +25,7 @@ struct PtyEntry {
     master: Box<dyn MasterPty + Send>,
     write_tx: mpsc::Sender<String>,
     alive: Arc<Mutex<bool>>,
+    pid: u32,
 }
 
 pub struct PtyPoolManager {
@@ -108,6 +109,9 @@ impl PtyPoolManager {
                 cmd.env(key, &val);
             }
         }
+
+        // nvm 호환성: npm_config_prefix가 설정되어 있으면 충돌 발생
+        cmd.env_remove("npm_config_prefix");
 
         let child = pair
             .slave
@@ -218,6 +222,7 @@ impl PtyPoolManager {
             master: pair.master,
             write_tx,
             alive,
+            pid,
         };
 
         self.pool.lock().unwrap().insert(pane_id.to_string(), entry);
@@ -296,5 +301,27 @@ impl PtyPoolManager {
 
     pub fn get_running_pane_ids(&self) -> Vec<String> {
         self.pool.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// PTY 프로세스의 현재 작업 디렉토리 조회 (macOS: lsof 사용)
+    pub fn get_cwd(&self, pane_id: &str) -> Result<String, String> {
+        let pool = self.pool.lock().unwrap();
+        let entry = pool.get(pane_id).ok_or("PTY not found")?;
+        let pid = entry.pid;
+        drop(pool);
+
+        let output = std::process::Command::new("lsof")
+            .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+            .output()
+            .map_err(|e| format!("lsof failed: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // lsof -Fn 출력에서 "n/path/to/dir" 라인 찾기
+        for line in stdout.lines() {
+            if line.starts_with('n') && line.len() > 1 {
+                return Ok(line[1..].to_string());
+            }
+        }
+        Err("Could not determine CWD".to_string())
     }
 }

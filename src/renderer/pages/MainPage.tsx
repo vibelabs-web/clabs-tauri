@@ -1,5 +1,5 @@
-// @TASK P2-S7-T1 - MainPage 통합
-// PTY와 xterm.js를 연결하는 메인 페이지 (다중 패인 지원)
+// MainPage - 멀티탭 워크스페이스 통합
+// 각 탭마다 독립된 paneTree/PTY 세션 유지, display:none으로 비활성 탭 숨김
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import MainLayout from '../components/layout/MainLayout';
@@ -7,30 +7,38 @@ import ProjectSelector from '../components/project/ProjectSelector';
 import SettingsModal from '../components/settings/SettingsModal';
 import CommandBuilder from '../components/terminal/CommandBuilder';
 import { useProjectStore } from '../stores/project';
-import { usePaneStore } from '../stores/pane';
+import { useWorkspaceStore } from '../stores/workspace';
 import type { UsageData } from '../types/usage';
 import { stripAnsi } from '../utils/ansi';
 import type { SplitDirection } from '@shared/pane-types';
+import { getAllLeaves } from '@shared/pane-types';
 
 export default function MainPage() {
-  // 설정 모달 상태
   const [showSettings, setShowSettings] = useState(false);
   const [showCommandBuilder, setShowCommandBuilder] = useState(false);
 
-  // 프로젝트 store
-  const { currentProject, showProjectSelector, openProjectSelector } = useProjectStore();
+  // 프로젝트 store (모달 상태만 사용)
+  const { showProjectSelector, openProjectSelector, closeProjectSelector } = useProjectStore();
 
-  // 패인 store
+  // 워크스페이스 store
   const {
-    root: paneTree,
-    activePaneId,
-    splitPane,
-    closePane,
-    renamePane,
-    resizeSplit,
-    setActivePaneId,
-    reset: resetPanes,
-  } = usePaneStore();
+    tabs,
+    activeTabId,
+    addTab,
+    removeTab,
+    switchTab,
+    getActiveTab,
+    splitPaneInTab,
+    closePaneInTab,
+    renamePaneInTab,
+    resizeSplitInTab,
+    setActivePaneInTab,
+    markPaneSpawned,
+    unmarkPaneSpawned,
+    isPaneSpawned,
+  } = useWorkspaceStore();
+
+  const activeTab = getActiveTab();
 
   // 모든 useState를 상단에 선언
   const [usage, setUsage] = useState<UsageData>({
@@ -49,59 +57,54 @@ export default function MainPage() {
   const [inputValue, setInputValue] = useState('claude --dangerously-skip-permissions');
   const [suggestion, setSuggestion] = useState('');
 
-  // 모든 useRef를 상단에 선언
   const sessionStartRef = useRef<number>(Date.now());
-  const spawnedPanesRef = useRef<Set<string>>(new Set()); // 이미 PTY 시작된 패인 추적
-  const lastProjectPathRef = useRef<string | null>(null);
-  const writeAbortRef = useRef(false); // ESC 시 진행 중인 문자 전송 중단용
-  const writeCooldownRef = useRef(false); // ESC 후 쿨다운 (Claude Code 인터럽트 처리 대기)
-  const responseBufferRef = useRef<string[]>([]); // PTY 응답 버퍼링
+  const writeAbortRef = useRef(false);
+  const writeCooldownRef = useRef(false);
+  const responseBufferRef = useRef<string[]>([]);
   const [lastResponse, setLastResponse] = useState('');
 
   // Usage 업데이트 구독
   useEffect(() => {
     if (window.api?.usage?.onUpdate) {
       const unsubscribe = window.api.usage.onUpdate((data) => {
-        console.log('Usage update received:', data);
-        setUsage(prev => ({
-          ...prev,
-          ...data,
-          taskDuration: prev.taskDuration
-        }));
+        setUsage(prev => ({ ...prev, ...data, taskDuration: prev.taskDuration }));
       });
       return unsubscribe;
     }
   }, []);
 
-  // PTY 종료 이벤트 구독 (paneId 포함)
+  // PTY 종료 이벤트 구독 — 워크스페이스 탭에서 paneId 제거
   useEffect(() => {
     if (window.api?.pty?.onExit) {
       const unsubscribe = window.api.pty.onExit((paneId, code) => {
         console.log(`[MainPage] PTY ${paneId} exited with code:`, code);
-        spawnedPanesRef.current.delete(paneId);
 
-        // 모든 PTY가 종료되면 상태 리셋
-        if (spawnedPanesRef.current.size === 0) {
+        // 모든 탭에서 해당 paneId를 spawned에서 제거
+        const { tabs } = useWorkspaceStore.getState();
+        for (const tab of tabs) {
+          if (tab.spawnedPaneIds.has(paneId)) {
+            unmarkPaneSpawned(tab.id, paneId);
+          }
+        }
+
+        // 활성 탭의 모든 PTY가 종료되면 상태 리셋
+        const currentTab = useWorkspaceStore.getState().getActiveTab();
+        if (currentTab && currentTab.spawnedPaneIds.size === 0) {
           setIsPtyRunning(false);
           setIsClaudeRunning(false);
         }
       });
       return unsubscribe;
     }
-  }, []);
+  }, [unmarkPaneSpawned]);
 
-  // PTY 시작 후 usage 데이터 주기적 요청 (API 포함)
+  // PTY 시작 후 usage 데이터 주기적 요청
   useEffect(() => {
     if (isPtyRunning && window.api?.usage?.get) {
       const fetchUsage = () => {
         window.api.usage.get().then((data) => {
-          console.log('Usage data:', data);
           if (data) {
-            setUsage(prev => ({
-              ...prev,
-              ...data,
-              taskDuration: prev.taskDuration
-            }));
+            setUsage(prev => ({ ...prev, ...data, taskDuration: prev.taskDuration }));
           }
         }).catch(err => console.error('Usage fetch error:', err));
       };
@@ -112,142 +115,124 @@ export default function MainPage() {
     }
   }, [isPtyRunning]);
 
-  // 태스크 시간 타이머 (1초마다 업데이트)
+  // 태스크 시간 타이머
   useEffect(() => {
     const timer = setInterval(() => {
       const duration = Math.floor((Date.now() - sessionStartRef.current) / 1000);
-      setUsage(prev => ({
-        ...prev,
-        taskDuration: duration
-      }));
+      setUsage(prev => ({ ...prev, taskDuration: duration }));
     }, 1000);
-
     return () => clearInterval(timer);
   }, []);
 
-  // 전역 ESC 키 핸들러 (활성 패인의 PTY에 Ctrl+C 전송)
+  // 전역 ESC 키 핸들러
   useEffect(() => {
     const handleGlobalEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isPtyRunning && !showSettings && !showProjectSelector) {
+      if (e.key === 'Escape' && isPtyRunning && !showSettings && !showProjectSelector && activeTab) {
+        // InputBox(textarea)에 포커스가 있으면 전역 ESC 무시 (InputBox 자체 핸들러 우선)
+        const active = document.activeElement;
+        if (active?.tagName === 'TEXTAREA' && (active as HTMLElement).dataset.testid === 'input-box') {
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
-
         writeAbortRef.current = true;
-        window.api?.pty?.write('\x03', activePaneId);
-        console.log(`[MainPage] Global ESC - sent Ctrl+C to pane ${activePaneId}`);
-
+        window.api?.pty?.write('\x03', activeTab.activePaneId);
         writeCooldownRef.current = true;
-        setTimeout(() => {
-          writeCooldownRef.current = false;
-        }, 1000);
+        setTimeout(() => { writeCooldownRef.current = false; }, 1000);
       }
     };
-
     document.addEventListener('keydown', handleGlobalEscape, true);
     return () => document.removeEventListener('keydown', handleGlobalEscape, true);
-  }, [isPtyRunning, showSettings, showProjectSelector, activePaneId]);
-
-  // 프로젝트 변경 시 모든 PTY 종료 + 패인 트리 리셋
-  useEffect(() => {
-    if (!currentProject) return;
-    if (currentProject.path === lastProjectPathRef.current) return;
-
-    console.log('Project changed to:', currentProject.path);
-
-    // 모든 기존 PTY 종료
-    if (isPtyRunning && window.api?.pty?.killAll) {
-      console.log('Killing all PTY processes...');
-      window.api.pty.killAll();
-      setIsPtyRunning(false);
-    }
-
-    // 패인 트리 리셋
-    resetPanes();
-    spawnedPanesRef.current.clear();
-    lastProjectPathRef.current = currentProject.path;
-    sessionStartRef.current = Date.now();
-    setIsClaudeRunning(false);
-    setInputValue('claude --dangerously-skip-permissions');
-  }, [currentProject, isPtyRunning, resetPanes]);
+  }, [isPtyRunning, showSettings, showProjectSelector, activeTab]);
 
   // 패인 터미널 준비 완료 시 해당 패인의 PTY 시작
+  // paneId로 어떤 탭에 속하는지 찾아서 해당 탭의 프로젝트 경로로 PTY 생성
   const handlePaneReady = useCallback(async (paneId: string) => {
-    if (!currentProject) {
-      console.log('No project selected, waiting...');
+    const { tabs } = useWorkspaceStore.getState();
+    console.log(`[handlePaneReady] paneId=${paneId}, tabs=${tabs.length}, tabIds=${tabs.map(t => t.id).join(',')}`);
+
+    // paneId가 속한 탭 찾기
+    const tab = tabs.find(t => {
+      const leaves = getAllLeaves(t.paneRoot);
+      return leaves.some(l => l.id === paneId);
+    });
+
+    if (!tab) {
+      console.warn(`[handlePaneReady] No tab found for paneId=${paneId}`);
       return;
     }
 
-    if (spawnedPanesRef.current.has(paneId)) return;
-    spawnedPanesRef.current.add(paneId);
+    if (tab.spawnedPaneIds.has(paneId)) {
+      console.log(`[handlePaneReady] paneId=${paneId} already spawned, skipping`);
+      return;
+    }
 
-    console.log(`Pane ${paneId} ready, starting PTY in:`, currentProject.path);
+    markPaneSpawned(tab.id, paneId);
+    console.log(`[handlePaneReady] Spawning PTY for pane ${paneId} in: ${tab.project.path} (tab: ${tab.id})`);
 
     try {
       if (window.api?.pty) {
-        await window.api.pty.spawn('claude', currentProject.path, paneId);
+        await window.api.pty.spawn('claude', tab.project.path, paneId);
         setIsPtyRunning(true);
-        console.log(`PTY spawned for pane ${paneId} in:`, currentProject.path);
+        console.log(`[handlePaneReady] PTY spawned successfully for pane ${paneId}`);
       }
     } catch (error) {
-      console.error(`Failed to spawn PTY for pane ${paneId}:`, error);
-      spawnedPanesRef.current.delete(paneId);
+      console.error(`[handlePaneReady] Failed to spawn PTY for pane ${paneId}:`, error);
+      unmarkPaneSpawned(tab.id, paneId);
     }
-  }, [currentProject]);
+  }, [markPaneSpawned, unmarkPaneSpawned]);
 
   // 터미널 데이터 핸들러 (xterm → 활성 패인 PTY)
   const handleData = useCallback((data: string) => {
-    if (window.api?.pty && isPtyRunningRef.current) {
-      window.api.pty.write(data, activePaneId);
+    if (window.api?.pty && isPtyRunningRef.current && activeTab) {
+      window.api.pty.write(data, activeTab.activePaneId);
     }
-  }, [activePaneId]);
+  }, [activeTab]);
 
   // 패인 분할 핸들러
   const handleSplit = useCallback((paneId: string, direction: SplitDirection) => {
-    const newPaneId = splitPane(paneId, direction);
+    if (!activeTab) return;
+    const newPaneId = splitPaneInTab(activeTab.id, paneId, direction);
     console.log(`Split pane ${paneId} ${direction} → new pane ${newPaneId}`);
-  }, [splitPane]);
+  }, [activeTab, splitPaneInTab]);
 
   // 패인 닫기 핸들러
   const handleClosePane = useCallback((paneId: string) => {
-    // PTY 종료
+    if (!activeTab) return;
     if (window.api?.pty) {
       window.api.pty.kill(paneId);
     }
-    spawnedPanesRef.current.delete(paneId);
-    closePane(paneId);
+    unmarkPaneSpawned(activeTab.id, paneId);
+    closePaneInTab(activeTab.id, paneId);
     console.log(`Closed pane ${paneId}`);
-  }, [closePane]);
+  }, [activeTab, closePaneInTab, unmarkPaneSpawned]);
 
   // 패인 클릭 핸들러
   const handlePaneClick = useCallback((paneId: string) => {
-    setActivePaneId(paneId);
-  }, [setActivePaneId]);
+    if (!activeTab) return;
+    setActivePaneInTab(activeTab.id, paneId);
+  }, [activeTab, setActivePaneInTab]);
 
   // 패인 이름 변경 핸들러
   const handleRenamePane = useCallback((paneId: string, name: string) => {
-    renamePane(paneId, name);
-  }, [renamePane]);
+    if (!activeTab) return;
+    renamePaneInTab(activeTab.id, paneId, name);
+  }, [activeTab, renamePaneInTab]);
 
   // 분할 비율 변경 핸들러
   const handleSplitResize = useCallback((splitId: string, newRatio: number) => {
-    resizeSplit(splitId, newRatio);
-  }, [resizeSplit]);
+    if (!activeTab) return;
+    resizeSplitInTab(activeTab.id, splitId, newRatio);
+  }, [activeTab, resizeSplitInTab]);
 
-  // 입력 제출 핸들러 (InputBox → 활성 패인 PTY)
+  // 입력 제출 핸들러
   const handleSubmit = useCallback(async (text: string) => {
-    console.log('[handleSubmit] text:', text, 'activePaneId:', activePaneId, 'isPtyRunning:', isPtyRunning);
+    const tab = useWorkspaceStore.getState().getActiveTab();
+    if (!tab) return;
 
-    if (!window.api?.pty) {
-      console.error('[handleSubmit] PTY API not available');
-      return;
-    }
-    if (!isPtyRunning) {
-      console.error('[handleSubmit] PTY not running, cannot send');
-      return;
-    }
+    if (!window.api?.pty || !isPtyRunning) return;
 
     if (writeCooldownRef.current) {
-      console.log('[handleSubmit] waiting for ESC cooldown...');
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
@@ -259,16 +244,13 @@ export default function MainPage() {
         setLastResponse(stripAnsi(responseBufferRef.current.join('')));
       }
       responseBufferRef.current = [];
-
       writeAbortRef.current = false;
 
-      // 활성 패인의 PTY로 전체 문자열을 한 번에 전송
-      window.api.pty.write(cleanText, activePaneId);
-
+      window.api.pty.write(cleanText, tab.activePaneId);
       await new Promise(resolve => setTimeout(resolve, 50));
-      await window.api.pty.write('\r', activePaneId);
+      await window.api.pty.write('\r', tab.activePaneId);
 
-      console.log(`[handleSubmit] sent to pane ${activePaneId}:`, cleanText);
+      console.log(`[handleSubmit] sent to pane ${tab.activePaneId}:`, cleanText);
     } catch (error) {
       console.error('[handleSubmit] Failed to send to PTY:', error);
     }
@@ -277,64 +259,88 @@ export default function MainPage() {
       window.api.commandHistory.add(text.trim()).catch(() => {});
     }
 
-    if (text.trim().startsWith('claude') && !isClaudeRunning && currentProject) {
+    if (text.trim().startsWith('claude') && !isClaudeRunning && tab.project) {
       setIsClaudeRunning(true);
       setTimeout(async () => {
         try {
-          await window.api.pty.startClaude(currentProject.path);
-          console.log('Session watcher started');
+          await window.api.pty.startClaude(tab.project.path);
         } catch (error) {
           console.error('Failed to start session watcher:', error);
         }
       }, 2000);
     }
-  }, [isPtyRunning, isClaudeRunning, currentProject, activePaneId]);
+  }, [isPtyRunning, isClaudeRunning]);
 
-  // 입력값 변경 핸들러
   const handleInputChange = useCallback((value: string) => {
     setInputValue(value);
   }, []);
 
-  // 설정 버튼 핸들러
   const handleSettingsClick = useCallback(() => {
     setShowSettings(true);
   }, []);
 
-  // 프로젝트 클릭 핸들러 (TitleBar에서 호출)
+  // "+" 탭 추가 → ProjectSelector 열기
+  const handleTabAdd = useCallback(() => {
+    openProjectSelector();
+  }, [openProjectSelector]);
+
+  // 탭 전환 (PTY 유지, display:none으로 전환)
+  const handleTabSwitch = useCallback((tabId: string) => {
+    switchTab(tabId);
+    // 전환된 탭에 PTY가 있으면 running 상태 유지
+    const { tabs } = useWorkspaceStore.getState();
+    const tab = tabs.find(t => t.id === tabId);
+    if (tab && tab.spawnedPaneIds.size > 0) {
+      setIsPtyRunning(true);
+    }
+  }, [switchTab]);
+
+  // 탭 닫기
+  const handleTabClose = useCallback((tabId: string) => {
+    removeTab(tabId);
+    // 남은 탭이 없으면 ProjectSelector 열기
+    const { tabs: remainingTabs } = useWorkspaceStore.getState();
+    if (remainingTabs.length === 0) {
+      openProjectSelector();
+      setIsPtyRunning(false);
+      setIsClaudeRunning(false);
+    }
+  }, [removeTab, openProjectSelector]);
+
+  // 프로젝트 클릭 핸들러 (TitleBar — 탭이 없을 때)
   const handleProjectClick = useCallback(() => {
     openProjectSelector();
   }, [openProjectSelector]);
 
-  // PTY 출력 캡처 핸들러 (응답 버퍼링)
+  // PTY 출력 캡처 핸들러
   const handlePtyOutput = useCallback((data: string) => {
     responseBufferRef.current.push(data);
   }, []);
 
-  // 프롬프트 제안 핸들러 (Claude Code ghost text)
+  // 프롬프트 제안 핸들러
   const handleSuggestion = useCallback((text: string) => {
     setSuggestion(text);
   }, []);
 
-  // CommandBuilder에서 실행
+  // CommandBuilder 실행
   const handleCommandBuilderExecute = useCallback((command: string) => {
     setInputValue(command);
     setTimeout(() => handleSubmit(command), 100);
   }, [handleSubmit]);
 
-  // CommandBuilder 열기
   const handleOpenCommandBuilder = useCallback(() => {
     setShowCommandBuilder(true);
   }, []);
 
-  // ESC 키 핸들러 (Claude Code 중단)
+  // ESC 키 핸들러
   const handleEscape = useCallback(() => {
-    if (window.api?.pty && isPtyRunning) {
+    if (window.api?.pty && isPtyRunning && activeTab) {
       writeAbortRef.current = true;
-      window.api.pty.write('\x03', activePaneId);
+      window.api.pty.write('\x03', activeTab.activePaneId);
       writeCooldownRef.current = true;
       setTimeout(() => { writeCooldownRef.current = false; }, 1000);
     }
-  }, [isPtyRunning, activePaneId]);
+  }, [isPtyRunning, activeTab]);
 
   return (
     <>
@@ -354,8 +360,8 @@ export default function MainPage() {
       {/* 메인 레이아웃 */}
       <MainLayout
         usage={usage}
-        projectName={currentProject?.name || '프로젝트 없음'}
-        projectPath={currentProject?.path}
+        projectName={activeTab?.project.name || '프로젝트 없음'}
+        projectPath={activeTab?.project.path}
         disabled={!isPtyRunning || showProjectSelector}
         inputValue={inputValue}
         suggestion={suggestion}
@@ -369,15 +375,21 @@ export default function MainPage() {
         onProjectClick={handleProjectClick}
         onEscape={handleEscape}
         onOpenCommandBuilder={handleOpenCommandBuilder}
-        // 다중 패인 props
-        paneTree={paneTree}
-        activePaneId={activePaneId}
+        // 다중 패인 props (활성 탭)
+        paneTree={activeTab?.paneRoot}
+        activePaneId={activeTab?.activePaneId}
         onPaneReady={handlePaneReady}
         onPaneClick={handlePaneClick}
         onSplit={handleSplit}
         onClosePane={handleClosePane}
         onRenamePane={handleRenamePane}
         onSplitResize={handleSplitResize}
+        // 멀티탭 props
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onTabSwitch={handleTabSwitch}
+        onTabClose={handleTabClose}
+        onTabAdd={handleTabAdd}
       />
     </>
   );

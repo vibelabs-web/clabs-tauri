@@ -617,6 +617,50 @@ pub async fn command_history_clear(state: State<'_, AppState>) -> Result<(), Str
 }
 
 // ─────────────────────────────────────────────────────────────
+// Filesystem (Tab completion)
+// ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct DirEntry {
+    name: String,
+    is_dir: bool,
+}
+
+/// PTY 프로세스의 현재 작업 디렉토리 조회
+#[tauri::command]
+pub fn pty_get_cwd(state: State<'_, AppState>, pane_id: String) -> Result<String, String> {
+    state.pty_pool.get_cwd(&pane_id)
+}
+
+/// 디렉토리 내 항목 목록 반환 (InputBox 탭 자동완성용)
+#[tauri::command]
+pub fn fs_list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    let target = if path.is_empty() || path == "." {
+        std::env::current_dir().map_err(|e| e.to_string())?
+    } else {
+        let expanded = if path.starts_with("~/") {
+            let home = dirs::home_dir().unwrap_or_default();
+            home.join(&path[2..])
+        } else if path == "~" {
+            dirs::home_dir().unwrap_or_default()
+        } else {
+            PathBuf::from(&path)
+        };
+        expanded
+    };
+
+    let entries = fs::read_dir(&target).map_err(|e| format!("{}: {}", target.display(), e))?;
+    let mut result: Vec<DirEntry> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        result.push(DirEntry { name, is_dir });
+    }
+    result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(result)
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(qmd update && qmd embed) &>/dev/null &",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

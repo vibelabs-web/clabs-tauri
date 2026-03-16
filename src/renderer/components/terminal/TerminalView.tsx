@@ -62,6 +62,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
     disposedRef.current = false;
 
     let retryCount = 0;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     const initTerminal = () => {
       if (disposedRef.current) return;
 
@@ -71,8 +72,9 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         console.log(`[TerminalView ${paneId}] initTerminal retry=${retryCount} rect=${Math.round(rect.width)}x${Math.round(rect.height)}`);
       }
       if (rect.width < 100 || rect.height < 100) {
-        if (!disposedRef.current) {
-          requestAnimationFrame(initTerminal);
+        if (!disposedRef.current && retryCount < 300) {
+          // display:none → block 전환 시 크기가 바로 반영 안 될 수 있으므로 rAF + 타이머 병행
+          retryTimeout = setTimeout(initTerminal, 100);
         }
         return;
       }
@@ -283,6 +285,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
 
     return () => {
       disposedRef.current = true;
+      if (retryTimeout) clearTimeout(retryTimeout);
       if ((container as any)?._cleanup) {
         (container as any)._cleanup();
       }
