@@ -77,6 +77,26 @@ pub fn run() {
             // Start orchestrator socket server
             orchestrator.start(pty_pool.clone(), app.handle().clone());
 
+            // Auto-start Slack bridge if tokens are configured
+            let slack_bridge = {
+                let settings_path = dirs::home_dir().unwrap_or_default().join(".claude").join("settings.json");
+                if let Ok(content) = std::fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let app_token = settings["slack_app_token"].as_str();
+                        let bot_token = settings["slack_bot_token"].as_str();
+                        let bot_user_id = settings["slack_bot_user_id"].as_str();
+                        if let (Some(at), Some(bt), Some(uid)) = (app_token, bot_token, bot_user_id) {
+                            if !at.is_empty() && !bt.is_empty() {
+                                log::info!("Auto-starting Slack bridge");
+                                Some(slack_bridge::SlackBridge::start(
+                                    at.to_string(), bt.to_string(), uid.to_string(), pty_pool.clone(),
+                                ))
+                            } else { None }
+                        } else { None }
+                    } else { None }
+                } else { None }
+            };
+
             let state = AppState {
                 pty_pool,
                 config_store: ConfigStore::new(),
@@ -89,7 +109,7 @@ pub fn run() {
                 file_watcher: FileWatcherManager::new(),
                 orchestrator,
                 split_waiters: Mutex::new(HashMap::new()),
-                slack_bridge: Mutex::new(None),
+                slack_bridge: Mutex::new(slack_bridge),
                 pane_names: Mutex::new(HashMap::new()),
             };
 
