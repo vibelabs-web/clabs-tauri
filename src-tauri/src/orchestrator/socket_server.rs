@@ -11,7 +11,9 @@ struct Request {
     id: String,
     action: String,
     pane_id: Option<String>,
+    name: Option<String>,  // name-based addressing (resolve to pane_id)
     message: Option<String>,
+    key: Option<String>,   // for "keys" action
     timeout_ms: Option<u64>,
     cli_type: Option<String>,
     max_lines: Option<usize>,
@@ -124,6 +126,24 @@ async fn handle_connection(
     }
 }
 
+/// Resolve pane_id from either pane_id or name field
+fn resolve_pane_id(req: &Request, app: &AppHandle) -> Option<String> {
+    // Direct pane_id takes priority
+    if let Some(id) = &req.pane_id {
+        return Some(id.clone());
+    }
+    // Try resolve by name
+    if let Some(name) = &req.name {
+        if let Some(state) = app.try_state::<crate::AppState>() {
+            let names = state.pane_names.lock().unwrap();
+            if let Some(id) = names.get(&name.to_lowercase()) {
+                return Some(id.clone());
+            }
+        }
+    }
+    None
+}
+
 async fn handle_request(
     req: Request,
     pty_pool: &Arc<PtyPoolManager>,
@@ -133,40 +153,113 @@ async fn handle_request(
     match req.action.as_str() {
         "list-panes" => {
             let panes = pty_pool.get_pane_info_list();
-            Response::success(req.id, serde_json::to_value(panes).unwrap())
+            // Include names in response
+            let names: std::collections::HashMap<String, String> = if let Some(state) = app.try_state::<crate::AppState>() {
+                state.pane_names.lock().unwrap().clone()
+            } else {
+                std::collections::HashMap::new()
+            };
+            Response::success(req.id, serde_json::json!({
+                "panes": panes,
+                "names": names,
+            }))
         }
 
+        // send = type + Enter (convenience)
         "send" => {
-            let pane_id = match &req.pane_id {
+            let pane_id = match resolve_pane_id(&req, app) {
                 Some(id) => id,
-                None => return Response::error(req.id, "pane_id required".into()),
+                None => return Response::error(req.id, "pane_id or name required".into()),
             };
             let message = match &req.message {
                 Some(m) => m,
                 None => return Response::error(req.id, "message required".into()),
             };
-            // Send text first, then Enter separately after delay
-            // TUI-based CLIs need time to process paste before receiving Enter
             let trimmed = message.trim();
-            match pty_pool.write(pane_id, trimmed) {
+            match pty_pool.write(&pane_id, trimmed) {
                 Ok(()) => {
-                    // Longer text needs more delay (CLI paste processing time)
                     let delay_ms = if trimmed.len() > 1000 { 2000 }
                         else if trimmed.len() > 200 { 1000 }
                         else { 300 };
                     tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                    pty_pool.write(pane_id, "\r").ok();
+                    pty_pool.write(&pane_id, "\r").ok();
                     Response::success(req.id, serde_json::json!({"sent": true}))
                 }
                 Err(e) => Response::error(req.id, e),
             }
         }
 
-        "read-buffer" => {
-            let pane_id = match &req.pane_id {
+        // type = text only, no Enter (smux-style)
+        "type" => {
+            let pane_id = match resolve_pane_id(&req, app) {
                 Some(id) => id,
-                None => return Response::error(req.id, "pane_id required".into()),
+                None => return Response::error(req.id, "pane_id or name required".into()),
             };
+            let message = match &req.message {
+                Some(m) => m,
+                None => return Response::error(req.id, "message required".into()),
+            };
+            match pty_pool.write(&pane_id, message) {
+                Ok(()) => Response::success(req.id, serde_json::json!({"typed": true})),
+                Err(e) => Response::error(req.id, e),
+            }
+        }
+
+        // keys = send special keys (Enter, Escape, Ctrl+C, etc.)
+        "keys" => {
+            let pane_id = match resolve_pane_id(&req, app) {
+                Some(id) => id,
+                None => return Response::error(req.id, "pane_id or name required".into()),
+            };
+            let key = match &req.key {
+                Some(k) => k.as_str(),
+                None => return Response::error(req.id, "key required".into()),
+            };
+            let bytes = match key.to_lowercase().as_str() {
+                "enter" | "return" => "\r",
+                "escape" | "esc" => "\x1b",
+                "tab" => "\t",
+                "backspace" => "\x7f",
+                "c-c" | "ctrl-c" | "ctrl+c" => "\x03",
+                "c-d" | "ctrl-d" | "ctrl+d" => "\x04",
+                "c-z" | "ctrl-z" | "ctrl+z" => "\x1a",
+                "c-l" | "ctrl-l" | "ctrl+l" => "\x0c",
+                "up" => "\x1b[A",
+                "down" => "\x1b[B",
+                "right" => "\x1b[C",
+                "left" => "\x1b[D",
+                "space" => " ",
+                _ => return Response::error(req.id, format!("Unknown key: {}", key)),
+            };
+            match pty_pool.write(&pane_id, bytes) {
+                Ok(()) => Response::success(req.id, serde_json::json!({"key_sent": key})),
+                Err(e) => Response::error(req.id, e),
+            }
+        }
+
+        // resolve = name → pane_id
+        "resolve" => {
+            let name = match &req.name {
+                Some(n) => n.to_lowercase(),
+                None => return Response::error(req.id, "name required".into()),
+            };
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                let names = state.pane_names.lock().unwrap();
+                match names.get(&name) {
+                    Some(id) => Response::success(req.id, serde_json::json!({"pane_id": id})),
+                    None => Response::error(req.id, format!("Name '{}' not found", name)),
+                }
+            } else {
+                Response::error(req.id, "AppState not available".into())
+            }
+        }
+
+        "read-buffer" => {
+            let pane_id = match resolve_pane_id(&req, app) {
+                Some(id) => id,
+                None => return Response::error(req.id, "pane_id or name required".into()),
+            };
+            let pane_id = &pane_id;
             let max_lines = req.max_lines.unwrap_or(100);
             match pty_pool.get_recent_output(pane_id, max_lines) {
                 Ok(lines) => Response::success(req.id, serde_json::to_value(lines).unwrap()),
@@ -175,10 +268,11 @@ async fn handle_request(
         }
 
         "wait-response" => {
-            let pane_id = match &req.pane_id {
+            let pane_id = match resolve_pane_id(&req, app) {
                 Some(id) => id,
-                None => return Response::error(req.id, "pane_id required".into()),
+                None => return Response::error(req.id, "pane_id or name required".into()),
             };
+            let pane_id = &pane_id;
             let timeout = req.timeout_ms.unwrap_or(60_000);
             let cli_type = req.cli_type.as_deref().unwrap_or("generic");
             let profile = super::cli_profiles::CliProfile::get(cli_type);
@@ -193,10 +287,11 @@ async fn handle_request(
         }
 
         "get-response" => {
-            let pane_id = match &req.pane_id {
+            let pane_id = match resolve_pane_id(&req, app) {
                 Some(id) => id,
-                None => return Response::error(req.id, "pane_id required".into()),
+                None => return Response::error(req.id, "pane_id or name required".into()),
             };
+            let pane_id = &pane_id;
             let message = match &req.message {
                 Some(m) => m,
                 None => return Response::error(req.id, "message required".into()),
@@ -211,9 +306,9 @@ async fn handle_request(
         }
 
         "split" => {
-            let pane_id = match &req.pane_id {
-                Some(id) => id.clone(),
-                None => return Response::error(req.id, "pane_id required".into()),
+            let pane_id = match resolve_pane_id(&req, app) {
+                Some(id) => id,
+                None => return Response::error(req.id, "pane_id or name required".into()),
             };
             let direction = req.direction.as_deref().unwrap_or("horizontal").to_string();
             let request_id = req.id.clone();

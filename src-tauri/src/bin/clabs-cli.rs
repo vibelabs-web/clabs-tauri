@@ -30,6 +30,10 @@ struct Request {
     max_lines: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     direction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,12 +80,16 @@ fn print_usage() {
     eprintln!();
     eprintln!("Usage:");
     eprintln!("  clabs pane list                                    List active panes");
-    eprintln!("  clabs pane send <pane_id> \"message\"                Send text to a pane");
-    eprintln!("  clabs pane send <pane_id> --file <path>            Send file content to a pane");
-    eprintln!("  clabs pane read <pane_id> [--lines N]              Read recent output (default 100)");
-    eprintln!("  clabs pane split <pane_id> [--direction DIR]      Split pane (horizontal/vertical)");
-    eprintln!("  clabs pane wait-response <pane_id> [OPTIONS]       Wait for CLI response");
-    eprintln!("  clabs pane get-response <pane_id> \"msg\" [OPTIONS]  Send + wait + return response");
+    eprintln!("  clabs pane send <target> \"message\"                 Send text + Enter");
+    eprintln!("  clabs pane type <target> \"text\"                   Type text (no Enter)");
+    eprintln!("  clabs pane keys <target> <key>                    Send key (Enter/Escape/Ctrl+C/...)");
+    eprintln!("  clabs pane read <target> [--lines N]              Read recent output");
+    eprintln!("  clabs pane split <target> [--direction DIR]       Split pane");
+    eprintln!("  clabs pane resolve <name>                         Resolve name to pane_id");
+    eprintln!("  clabs pane wait-response <target> [OPTIONS]       Wait for response");
+    eprintln!("  clabs pane get-response <target> \"msg\" [OPTIONS]  Send + wait + return");
+    eprintln!();
+    eprintln!("Target can be a pane_id or a pane name (e.g. 'Terminal 2', 'Builder').");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --timeout <SEC>     Timeout in seconds (default: 120)");
@@ -98,6 +106,15 @@ fn parse_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .position(|a| a == flag)
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
+}
+
+/// Parse target as either pane_id (starts with "pane-") or name
+fn parse_target(target: &str) -> (Option<String>, Option<String>) {
+    if target.starts_with("pane-") {
+        (Some(target.to_string()), None)
+    } else {
+        (None, Some(target.to_string()))
+    }
 }
 
 fn main() {
@@ -121,151 +138,76 @@ fn main() {
             let req = Request {
                 id: "cli-1".into(),
                 action: "list-panes".into(),
-                pane_id: None,
-                message: None,
-                timeout_ms: None,
-                cli_type: None,
-                max_lines: None,
-                direction: None,
+                pane_id: None, name: None,
+                message: None, key: None,
+                timeout_ms: None, cli_type: None,
+                max_lines: None, direction: None,
             };
             send_request(req)
         }
 
         "send" => {
-            if args.len() < 4 {
-                eprintln!("Usage: clabs pane send <pane_id> \"message\" | --file <path>");
-                std::process::exit(1);
-            }
-            let pane_id = args[3].clone();
+            if args.len() < 4 { eprintln!("Usage: clabs pane send <target> \"message\""); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
             let message = if let Some(path) = parse_flag(&args, "--file") {
-                std::fs::read_to_string(path).unwrap_or_else(|e| {
-                    eprintln!("Cannot read file {}: {}", path, e);
-                    std::process::exit(1);
-                })
-            } else if args.len() > 4 && !args[4].starts_with('-') {
-                args[4].clone()
-            } else {
-                eprintln!("Message or --file required");
-                std::process::exit(1);
-            };
+                std::fs::read_to_string(path).unwrap_or_else(|e| { eprintln!("Cannot read file: {}", e); std::process::exit(1); })
+            } else if args.len() > 4 && !args[4].starts_with('-') { args[4].clone() }
+            else { eprintln!("Message or --file required"); std::process::exit(1); };
 
-            let req = Request {
-                id: "cli-1".into(),
-                action: "send".into(),
-                pane_id: Some(pane_id),
-                message: Some(message),
-                timeout_ms: None,
-                cli_type: None,
-                max_lines: None,
-                direction: None,
-            };
-            send_request(req)
+            send_request(Request { id: "cli-1".into(), action: "send".into(), pane_id, name, message: Some(message), key: None, timeout_ms: None, cli_type: None, max_lines: None, direction: None })
+        }
+
+        "type" => {
+            if args.len() < 5 { eprintln!("Usage: clabs pane type <target> \"text\""); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
+            let message = args[4].clone();
+            send_request(Request { id: "cli-1".into(), action: "type".into(), pane_id, name, message: Some(message), key: None, timeout_ms: None, cli_type: None, max_lines: None, direction: None })
+        }
+
+        "keys" => {
+            if args.len() < 5 { eprintln!("Usage: clabs pane keys <target> <key>"); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
+            let key = args[4].clone();
+            send_request(Request { id: "cli-1".into(), action: "keys".into(), pane_id, name, message: None, key: Some(key), timeout_ms: None, cli_type: None, max_lines: None, direction: None })
+        }
+
+        "resolve" => {
+            if args.len() < 4 { eprintln!("Usage: clabs pane resolve <name>"); std::process::exit(1); }
+            let resolve_name = args[3].clone();
+            send_request(Request { id: "cli-1".into(), action: "resolve".into(), pane_id: None, name: Some(resolve_name), message: None, key: None, timeout_ms: None, cli_type: None, max_lines: None, direction: None })
         }
 
         "read" => {
-            if args.len() < 4 {
-                eprintln!("Usage: clabs pane read <pane_id> [--lines N]");
-                std::process::exit(1);
-            }
-            let pane_id = args[3].clone();
-            let max_lines = parse_flag(&args, "--lines")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(100);
-
-            let req = Request {
-                id: "cli-1".into(),
-                action: "read-buffer".into(),
-                pane_id: Some(pane_id),
-                message: None,
-                timeout_ms: None,
-                cli_type: None,
-                max_lines: Some(max_lines),
-                direction: None,
-            };
-            send_request(req)
+            if args.len() < 4 { eprintln!("Usage: clabs pane read <target> [--lines N]"); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
+            let max_lines = parse_flag(&args, "--lines").and_then(|s| s.parse::<usize>().ok()).unwrap_or(100);
+            send_request(Request { id: "cli-1".into(), action: "read-buffer".into(), pane_id, name, message: None, key: None, timeout_ms: None, cli_type: None, max_lines: Some(max_lines), direction: None })
         }
 
         "split" => {
-            if args.len() < 4 {
-                eprintln!("Usage: clabs pane split <pane_id> [--direction horizontal|vertical]");
-                std::process::exit(1);
-            }
-            let pane_id = args[3].clone();
-            let direction = parse_flag(&args, "--direction")
-                .unwrap_or("horizontal")
-                .to_string();
-
-            let req = Request {
-                id: "cli-1".into(),
-                action: "split".into(),
-                pane_id: Some(pane_id),
-                message: None,
-                timeout_ms: None,
-                cli_type: None,
-                max_lines: None,
-                direction: Some(direction),
-            };
-            send_request(req)
+            if args.len() < 4 { eprintln!("Usage: clabs pane split <target> [--direction DIR]"); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
+            let direction = parse_flag(&args, "--direction").unwrap_or("horizontal").to_string();
+            send_request(Request { id: "cli-1".into(), action: "split".into(), pane_id, name, message: None, key: None, timeout_ms: None, cli_type: None, max_lines: None, direction: Some(direction) })
         }
 
         "wait-response" => {
-            if args.len() < 4 {
-                eprintln!("Usage: clabs pane wait-response <pane_id> [--timeout SEC] [--cli-type TYPE]");
-                std::process::exit(1);
-            }
-            let pane_id = args[3].clone();
-            let timeout_sec = parse_flag(&args, "--timeout")
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(120);
-            let cli_type = parse_flag(&args, "--cli-type")
-                .unwrap_or("generic")
-                .to_string();
-
-            let req = Request {
-                id: "cli-1".into(),
-                action: "wait-response".into(),
-                pane_id: Some(pane_id),
-                message: None,
-                timeout_ms: Some(timeout_sec * 1000),
-                cli_type: Some(cli_type),
-                max_lines: None,
-                direction: None,
-            };
-            send_request(req)
+            if args.len() < 4 { eprintln!("Usage: clabs pane wait-response <target> [--timeout SEC] [--cli-type TYPE]"); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
+            let timeout_sec = parse_flag(&args, "--timeout").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
+            let cli_type = parse_flag(&args, "--cli-type").unwrap_or("generic").to_string();
+            send_request(Request { id: "cli-1".into(), action: "wait-response".into(), pane_id, name, message: None, key: None, timeout_ms: Some(timeout_sec * 1000), cli_type: Some(cli_type), max_lines: None, direction: None })
         }
 
         "get-response" => {
-            if args.len() < 5 {
-                eprintln!("Usage: clabs pane get-response <pane_id> \"message\" [--timeout SEC] [--cli-type TYPE]");
-                std::process::exit(1);
-            }
-            let pane_id = args[3].clone();
+            if args.len() < 5 { eprintln!("Usage: clabs pane get-response <target> \"msg\" [--timeout SEC] [--cli-type TYPE]"); std::process::exit(1); }
+            let (pane_id, name) = parse_target(&args[3]);
             let message = if let Some(path) = parse_flag(&args, "--file") {
-                std::fs::read_to_string(path).unwrap_or_else(|e| {
-                    eprintln!("Cannot read file {}: {}", path, e);
-                    std::process::exit(1);
-                })
-            } else {
-                args[4].clone()
-            };
-            let timeout_sec = parse_flag(&args, "--timeout")
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(120);
-            let cli_type = parse_flag(&args, "--cli-type")
-                .unwrap_or("generic")
-                .to_string();
-
-            let req = Request {
-                id: "cli-1".into(),
-                action: "get-response".into(),
-                pane_id: Some(pane_id),
-                message: Some(message),
-                timeout_ms: Some(timeout_sec * 1000),
-                cli_type: Some(cli_type),
-                max_lines: None,
-                direction: None,
-            };
-            send_request(req)
+                std::fs::read_to_string(path).unwrap_or_else(|e| { eprintln!("Cannot read file: {}", e); std::process::exit(1); })
+            } else { args[4].clone() };
+            let timeout_sec = parse_flag(&args, "--timeout").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120);
+            let cli_type = parse_flag(&args, "--cli-type").unwrap_or("generic").to_string();
+            send_request(Request { id: "cli-1".into(), action: "get-response".into(), pane_id, name, message: Some(message), key: None, timeout_ms: Some(timeout_sec * 1000), cli_type: Some(cli_type), max_lines: None, direction: None })
         }
 
         _ => {

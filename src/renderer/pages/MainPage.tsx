@@ -291,6 +291,13 @@ export default function MainPage() {
         await window.api.pty.spawn('claude', tab.project.path, paneId);
         setIsPtyRunning(true);
         console.log(`[handlePaneReady] PTY spawned successfully for pane ${paneId}`);
+
+        // Register pane name in orchestrator for name-based addressing
+        const leaves = getAllLeaves(tab.paneRoot);
+        const leaf = leaves.find(l => l.id === paneId);
+        if (leaf?.name) {
+          invoke('orchestrate_pane_name', { paneId, name: leaf.name }).catch(() => {});
+        }
       }
     } catch (error) {
       console.error(`[handlePaneReady] Failed to spawn PTY for pane ${paneId}:`, error);
@@ -336,10 +343,12 @@ export default function MainPage() {
     setActivePaneInTab(activeTab.id, paneId);
   }, [activeTab, setActivePaneInTab]);
 
-  // 패인 이름 변경 핸들러
+  // 패인 이름 변경 핸들러 + orchestrator 이름 레지스트리 동기화
   const handleRenamePane = useCallback((paneId: string, name: string) => {
     if (!activeTab) return;
     renamePaneInTab(activeTab.id, paneId, name);
+    // Register name in orchestrator for clabs CLI name-based addressing
+    invoke('orchestrate_pane_name', { paneId, name }).catch(() => {});
   }, [activeTab, renamePaneInTab]);
 
   // 분할 비율 변경 핸들러

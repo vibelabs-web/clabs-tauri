@@ -121,6 +121,20 @@ pub async fn pty_kill_all(state: State<'_, AppState>) -> Result<(), String> {
 // Orchestrator Commands
 // ─────────────────────────────────────────────────────────────
 
+/// Register a pane name for name-based addressing
+#[tauri::command]
+pub async fn orchestrate_pane_name(
+    state: State<'_, AppState>,
+    pane_id: String,
+    name: String,
+) -> Result<(), String> {
+    let mut names = state.pane_names.lock().unwrap();
+    // Remove old entry for this pane_id
+    names.retain(|_, v| v != &pane_id);
+    names.insert(name.to_lowercase(), pane_id);
+    Ok(())
+}
+
 /// Called by the renderer after splitting a pane to report the new pane ID
 #[tauri::command]
 pub async fn orchestrate_split_result(

@@ -10,3 +10,7 @@
 
 빠른 조회에는 qmd search를, 복잡한 질문에는 qmd query를 사용하십시오.
 qmd가 충분한 결과를 반환하지 않을 때만 Read/Glob을 사용하십시오.
+
+## Inter-Pane Communication
+
+`clabs pane send "t2" "메시지"` — 다른 페인의 AI에게 작업 지시. 상세 사용법은 clabs-bridge 스킬 참조.

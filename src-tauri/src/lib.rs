@@ -38,6 +38,8 @@ pub struct AppState {
     pub split_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>,
     /// Slack Socket Mode bridge (optional)
     pub slack_bridge: Mutex<Option<slack_bridge::SlackBridge>>,
+    /// Pane name registry: name → pane_id (for resolve by name)
+    pub pane_names: Mutex<HashMap<String, String>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,6 +90,7 @@ pub fn run() {
                 orchestrator,
                 split_waiters: Mutex::new(HashMap::new()),
                 slack_bridge: Mutex::new(None),
+                pane_names: Mutex::new(HashMap::new()),
             };
 
             app.manage(state);
@@ -104,6 +107,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Orchestrator
             commands::orchestrate_split_result,
+            commands::orchestrate_pane_name,
             // Slack
             commands::slack_connect,
             commands::slack_disconnect,
