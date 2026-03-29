@@ -228,6 +228,10 @@ npm run test
 
 ---
 
+## 문서
+
+- [Slack 원격 제어 설정 가이드](docs/slack-setup.md) — Slack에서 Claude Code에 작업 지시
+
 ## 링크
 
 - [VibeLabs 스킬 마켓](https://vibelabs.kr/skills/new)
