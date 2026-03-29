@@ -4,10 +4,15 @@ version = "1.9.3"
 description = "Claude Labs Skillpack GUI"
 authors = ["Claude Labs"]
 edition = "2021"
+default-run = "clabs"
 
 [lib]
 name = "clabs_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "clabs-cli"
+path = "src/bin/clabs-cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

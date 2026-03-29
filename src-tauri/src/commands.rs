@@ -118,6 +118,24 @@ pub async fn pty_kill_all(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Orchestrator Commands
+// ─────────────────────────────────────────────────────────────
+
+/// Called by the renderer after splitting a pane to report the new pane ID
+#[tauri::command]
+pub async fn orchestrate_split_result(
+    state: State<'_, AppState>,
+    request_id: String,
+    new_pane_id: String,
+) -> Result<(), String> {
+    let tx = state.split_waiters.lock().unwrap().remove(&request_id);
+    if let Some(tx) = tx {
+        tx.send(new_pane_id).ok();
+    }
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────
 // Usage Commands
 // ─────────────────────────────────────────────────────────────
 

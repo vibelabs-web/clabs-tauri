@@ -216,13 +216,28 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         // ─── ResizeObserver (컨테이너 크기 변경 감지) ───
         resizeObserver = new ResizeObserver((entries) => {
           if (disposedRef.current) return;
-          // contentRect가 0이면 display:none → 무시
           const entry = entries[0];
           if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
             debouncedFit();
           }
         });
         resizeObserver.observe(container);
+
+        // IntersectionObserver: 탭 전환 시 display:none → block 감지하여 refit
+        const visibilityObserver = new IntersectionObserver((entries) => {
+          if (disposedRef.current) return;
+          const entry = entries[0];
+          if (entry && entry.isIntersecting && entry.intersectionRatio > 0) {
+            // 터미널이 다시 보이면 refit + 스크롤 복원
+            setTimeout(() => {
+              if (!disposedRef.current && fitAddonRef.current && terminalRef.current) {
+                doFit();
+                terminalRef.current.scrollToBottom();
+              }
+            }, 100);
+          }
+        }, { threshold: 0.1 });
+        visibilityObserver.observe(container);
 
         // ─── 키보드 핸들러 ───
         terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -321,6 +336,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           disposedRef.current = true;
           unregisterTerminal(paneId);
           if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+          visibilityObserver.disconnect();
           if (fitDebounceTimer) clearTimeout(fitDebounceTimer);
           if (initialFitTimer) { clearTimeout(initialFitTimer); initialFitTimer = null; }
           if (unsubscribe) unsubscribe();

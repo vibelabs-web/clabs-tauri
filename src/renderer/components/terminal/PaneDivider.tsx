@@ -59,7 +59,7 @@ export function PaneDivider({ direction, onResize }: PaneDividerProps) {
         cursor: isVertical ? 'col-resize' : 'row-resize',
         background: 'transparent',
         position: 'relative',
-        zIndex: 10,
+        zIndex: 1,
       }}
       onMouseDown={handleMouseDown}
     >

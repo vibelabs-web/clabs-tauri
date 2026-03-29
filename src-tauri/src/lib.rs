@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 mod commands;
+mod orchestrator;
 mod pty;
 mod session;
 mod setup;
@@ -10,17 +11,19 @@ mod usage_api;
 
 use commands::{load_command_history, load_projects, CommandHistoryEntry};
 use file_watcher::FileWatcherManager;
+use orchestrator::OrchestratorServer;
 use pty::PtyPoolManager;
 use session::SessionWatcher;
 use setup::SetupService;
 use stores::config::ConfigStore;
 use stores::license::LicenseStore;
 use stores::usage::UsageStore;
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 pub struct AppState {
-    pub pty_pool: PtyPoolManager,
+    pub pty_pool: Arc<PtyPoolManager>,
     pub config_store: ConfigStore,
     pub license_store: LicenseStore,
     pub usage_store: UsageStore,
@@ -29,6 +32,9 @@ pub struct AppState {
     pub projects_store: Mutex<Vec<serde_json::Value>>,
     pub command_history: Mutex<Vec<CommandHistoryEntry>>,
     pub file_watcher: FileWatcherManager,
+    pub orchestrator: OrchestratorServer,
+    /// Pending split requests: request_id → oneshot sender for new pane ID
+    pub split_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -60,8 +66,14 @@ pub fn run() {
                 }
             }
 
+            let pty_pool = Arc::new(PtyPoolManager::new());
+            let orchestrator = OrchestratorServer::new();
+
+            // Start orchestrator socket server
+            orchestrator.start(pty_pool.clone(), app.handle().clone());
+
             let state = AppState {
-                pty_pool: PtyPoolManager::new(),
+                pty_pool,
                 config_store: ConfigStore::new(),
                 license_store: LicenseStore::new(),
                 usage_store: UsageStore::new(),
@@ -70,6 +82,8 @@ pub fn run() {
                 projects_store: Mutex::new(load_projects()),
                 command_history: Mutex::new(load_command_history()),
                 file_watcher: FileWatcherManager::new(),
+                orchestrator,
+                split_waiters: Mutex::new(HashMap::new()),
             };
 
             app.manage(state);
@@ -84,6 +98,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Orchestrator
+            commands::orchestrate_split_result,
             // PTY
             commands::pty_spawn,
             commands::pty_write,
@@ -166,6 +182,7 @@ pub fn run() {
                 let app = window.app_handle();
                 if let Some(state) = app.try_state::<AppState>() {
                     log::info!("Window destroyed, cleaning up...");
+                    state.orchestrator.stop();
                     state.session_watcher.stop();
                     state.file_watcher.stop();
                     state.pty_pool.kill_all();

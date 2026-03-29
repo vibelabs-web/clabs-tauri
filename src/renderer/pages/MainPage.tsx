@@ -15,6 +15,8 @@ import type { UsageData } from '../types/usage';
 import { stripAnsi } from '../utils/ansi';
 import type { SplitDirection } from '@shared/pane-types';
 import { getAllLeaves } from '@shared/pane-types';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 export default function MainPage() {
   const [showSettings, setShowSettings] = useState(false);
@@ -164,6 +166,45 @@ export default function MainPage() {
       saveSession();
     }
   }, [tabs, activeTabId, saveSession]);
+
+  // Orchestrator: 원격 페인 분할 요청 수신
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    listen<{ paneId: string; direction: string; requestId: string }>(
+      'orchestrate:split-pane',
+      async (event) => {
+        const { paneId, direction, requestId } = event.payload;
+        const store = useWorkspaceStore.getState();
+
+        // Find the tab that contains this paneId (not just active tab)
+        const tab = store.tabs.find(t => {
+          const leaves = getAllLeaves(t.paneRoot);
+          return leaves.some(l => l.id === paneId);
+        }) || store.getActiveTab();
+
+        if (!tab) {
+          console.error('[orchestrate] No tab found for split');
+          return;
+        }
+
+        const dir = (direction === 'vertical' ? 'vertical' : 'horizontal') as SplitDirection;
+        const newPaneId = store.splitPaneInTab(tab.id, paneId, dir);
+
+        console.log(`[orchestrate] Split pane ${paneId} ${dir} → ${newPaneId} (tab: ${tab.id})`);
+
+        if (newPaneId) {
+          // Report result to Tauri backend via IPC command
+          await invoke('orchestrate_split_result', {
+            requestId,
+            newPaneId,
+          });
+        }
+      },
+    ).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  }, []);
 
   // 태스크 시간 타이머
   useEffect(() => {

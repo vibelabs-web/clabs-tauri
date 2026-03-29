@@ -120,7 +120,7 @@ export function SplitPaneContainer({
         bottom: 0,
       }}
     >
-      <div style={{ flex: ratio, position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
+      <div style={{ flex: ratio, position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0, zIndex: 2 }}>
         <div style={abs}>
           <SplitPaneContainer node={node.first} {...sharedProps} />
         </div>
@@ -128,7 +128,7 @@ export function SplitPaneContainer({
 
       <PaneDivider direction={node.direction} onResize={handleResize} />
 
-      <div style={{ flex: 1 - ratio, position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
+      <div style={{ flex: 1 - ratio, position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0, zIndex: 2 }}>
         <div style={abs}>
           <SplitPaneContainer node={node.second} {...sharedProps} />
         </div>

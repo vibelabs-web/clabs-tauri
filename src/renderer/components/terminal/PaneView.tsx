@@ -58,6 +58,13 @@ export function PaneView({
     }
   }, [pane.id, activeEditorTab, onEditorTabDirtyChange]);
 
+  // xterm 입력을 이 페인의 PTY로 직접 전송 (공유 onData 대신)
+  const handleTerminalData = useCallback((data: string) => {
+    if (window.api?.pty) {
+      window.api.pty.write(data, pane.id);
+    }
+  }, [pane.id]);
+
   return (
     <div
       style={{
@@ -104,7 +111,7 @@ export function PaneView({
           <TerminalView
             key={`${projectPath || 'default'}-${pane.id}`}
             paneId={pane.id}
-            onData={onData}
+            onData={handleTerminalData}
             onReady={() => onPaneReady(pane.id)}
             onSuggestion={onSuggestion}
             onPtyOutput={onPtyOutput}

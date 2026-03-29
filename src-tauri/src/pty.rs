@@ -1,10 +1,11 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Serialize)]
@@ -21,11 +22,18 @@ struct PtyExitEvent {
     code: i32,
 }
 
+/// Max ring buffer size in bytes (100KB)
+const OUTPUT_BUFFER_MAX_BYTES: usize = 100_000;
+
 struct PtyEntry {
     master: Box<dyn MasterPty + Send>,
     write_tx: mpsc::Sender<String>,
     alive: Arc<Mutex<bool>>,
     pid: u32,
+    /// Ring buffer for orchestrator response collection
+    output_buffer: Arc<Mutex<VecDeque<String>>>,
+    /// Timestamp of last PTY output (for idle detection)
+    last_output_at: Arc<Mutex<Instant>>,
 }
 
 pub struct PtyPoolManager {
@@ -83,6 +91,7 @@ impl PtyPoolManager {
 
         let mut paths: Vec<String> = Vec::new();
         let path_candidates = [
+            home_dir.join(".clabs/bin"),  // clabs CLI (inter-pane orchestration)
             home_dir.join(".nvm/current/bin"),
             home_dir.join(".fnm/current/bin"),
             home_dir.join(".volta/bin"),
@@ -112,6 +121,12 @@ impl PtyPoolManager {
 
         // nvm 호환성: npm_config_prefix가 설정되어 있으면 충돌 발생
         cmd.env_remove("npm_config_prefix");
+
+        // Orchestrator: inter-pane communication 환경변수
+        cmd.env("CLABS_PANE_ID", pane_id);
+        let socket_path = home_dir.join(".clabs").join("sock");
+        cmd.env("CLABS_SOCKET", socket_path.to_string_lossy().as_ref());
+        cmd.env("CLABS_APP", "1");
 
         let child = pair
             .slave
@@ -153,6 +168,12 @@ impl PtyPoolManager {
         let app_data = app.clone();
         let app_exit = app.clone();
 
+        // Shared ring buffer + timestamp for orchestrator
+        let output_buffer = Arc::new(Mutex::new(VecDeque::<String>::new()));
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
+        let output_buffer_clone = output_buffer.clone();
+        let last_output_clone = last_output_at.clone();
+
         // Data reader thread (UTF-8 boundary-safe)
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
@@ -167,15 +188,37 @@ impl PtyPoolManager {
                         data_bytes.extend_from_slice(&buf[..n]);
                         incomplete.clear();
 
+                        // Helper: emit data + append to ring buffer
+                        let emit_and_buffer = |text: &str| {
+                            app_data
+                                .emit("pty:data", PtyDataEvent {
+                                    pane_id: pane_id_data.clone(),
+                                    data: text.to_string(),
+                                })
+                                .ok();
+
+                            // Append to ring buffer for orchestrator
+                            if let Ok(mut rb) = output_buffer_clone.lock() {
+                                rb.push_back(text.to_string());
+                                // Trim to max size
+                                let mut total: usize = rb.iter().map(|s| s.len()).sum();
+                                while total > OUTPUT_BUFFER_MAX_BYTES {
+                                    if let Some(front) = rb.pop_front() {
+                                        total -= front.len();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(mut ts) = last_output_clone.lock() {
+                                *ts = Instant::now();
+                            }
+                        };
+
                         // Find valid UTF-8 boundary
                         match std::str::from_utf8(&data_bytes) {
                             Ok(s) => {
-                                app_data
-                                    .emit("pty:data", PtyDataEvent {
-                                        pane_id: pane_id_data.clone(),
-                                        data: s.to_string(),
-                                    })
-                                    .ok();
+                                emit_and_buffer(s);
                             }
                             Err(e) => {
                                 let valid_up_to = e.valid_up_to();
@@ -183,12 +226,7 @@ impl PtyPoolManager {
                                     let valid = unsafe {
                                         std::str::from_utf8_unchecked(&data_bytes[..valid_up_to])
                                     };
-                                    app_data
-                                        .emit("pty:data", PtyDataEvent {
-                                            pane_id: pane_id_data.clone(),
-                                            data: valid.to_string(),
-                                        })
-                                        .ok();
+                                    emit_and_buffer(valid);
                                 }
                                 // Save trailing incomplete bytes for next read
                                 incomplete.extend_from_slice(&data_bytes[valid_up_to..]);
@@ -223,6 +261,8 @@ impl PtyPoolManager {
             write_tx,
             alive,
             pid,
+            output_buffer,
+            last_output_at,
         };
 
         self.pool.lock().unwrap().insert(pane_id.to_string(), entry);
@@ -324,4 +364,50 @@ impl PtyPoolManager {
         }
         Err("Could not determine CWD".to_string())
     }
+
+    // ── Orchestrator support ──
+
+    /// Get recent output from the ring buffer (up to max_lines chunks)
+    pub fn get_recent_output(&self, pane_id: &str, max_lines: usize) -> Result<Vec<String>, String> {
+        let pool = self.pool.lock().unwrap();
+        let entry = pool.get(pane_id).ok_or_else(|| format!("PTY not found: {}", pane_id))?;
+        let rb = entry.output_buffer.lock().unwrap();
+        let skip = if rb.len() > max_lines { rb.len() - max_lines } else { 0 };
+        Ok(rb.iter().skip(skip).cloned().collect())
+    }
+
+    /// Get duration since last output (for idle detection)
+    pub fn get_idle_duration(&self, pane_id: &str) -> Result<std::time::Duration, String> {
+        let pool = self.pool.lock().unwrap();
+        let entry = pool.get(pane_id).ok_or_else(|| format!("PTY not found: {}", pane_id))?;
+        let ts = entry.last_output_at.lock().unwrap();
+        Ok(ts.elapsed())
+    }
+
+    /// Clear the output buffer (mark start of new response)
+    pub fn clear_output_buffer(&self, pane_id: &str) -> Result<(), String> {
+        let pool = self.pool.lock().unwrap();
+        let entry = pool.get(pane_id).ok_or_else(|| format!("PTY not found: {}", pane_id))?;
+        entry.output_buffer.lock().unwrap().clear();
+        Ok(())
+    }
+
+    /// Get list of running panes with metadata
+    pub fn get_pane_info_list(&self) -> Vec<PaneInfo> {
+        let pool = self.pool.lock().unwrap();
+        pool.iter()
+            .map(|(id, entry)| PaneInfo {
+                pane_id: id.clone(),
+                pid: entry.pid,
+                alive: *entry.alive.lock().unwrap(),
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct PaneInfo {
+    pub pane_id: String,
+    pub pid: u32,
+    pub alive: bool,
 }
