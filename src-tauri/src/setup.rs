@@ -353,6 +353,25 @@ impl SetupService {
         }
     }
 
+    pub fn setup_slack_tokens(&self, app_token: &str, bot_token: &str, bot_user_id: &str) {
+        let settings_path = self.claude_dir.join("settings.json");
+        let mut settings: serde_json::Value = if settings_path.exists() {
+            std::fs::read_to_string(&settings_path)
+                .ok()
+                .and_then(|c| serde_json::from_str(&c).ok())
+                .unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        settings["slack_app_token"] = serde_json::Value::String(app_token.to_string());
+        settings["slack_bot_token"] = serde_json::Value::String(bot_token.to_string());
+        settings["slack_bot_user_id"] = serde_json::Value::String(bot_user_id.to_string());
+        std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap_or_default()).ok();
+
+        log::info!("Slack tokens saved to settings.json");
+    }
+
     pub fn check_gcloud_auth(&self) -> bool {
         Command::new("sh")
             .args(["-l", "-c", "gcloud auth list --filter=status:ACTIVE --format='value(account)'"])

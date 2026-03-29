@@ -37,3 +37,5 @@ dirs = "6"
 regex = "1"
 chrono = "0.4"
 open = "5"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"

@@ -136,6 +136,67 @@ pub async fn orchestrate_split_result(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Slack Commands
+// ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn slack_connect(
+    state: State<'_, AppState>,
+    app_token: String,
+    bot_token: String,
+    bot_user_id: String,
+) -> Result<Value, String> {
+    // Save tokens to settings.json
+    state.setup_service.setup_slack_tokens(&app_token, &bot_token, &bot_user_id);
+
+    // Start SlackBridge
+    let bridge = crate::slack_bridge::SlackBridge::start(
+        app_token,
+        bot_token,
+        bot_user_id,
+        state.pty_pool.clone(),
+    );
+    *state.slack_bridge.lock().unwrap() = Some(bridge);
+
+    Ok(serde_json::json!({"connected": true}))
+}
+
+#[tauri::command]
+pub async fn slack_disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    let mut bridge = state.slack_bridge.lock().unwrap();
+    if let Some(ref mut b) = *bridge {
+        b.stop();
+    }
+    *bridge = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn slack_status(state: State<'_, AppState>) -> Result<Value, String> {
+    let bridge = state.slack_bridge.lock().unwrap();
+    let connected = bridge.is_some();
+    Ok(serde_json::json!({"connected": connected}))
+}
+
+#[tauri::command]
+pub async fn slack_send(
+    state: State<'_, AppState>,
+    channel: String,
+    text: String,
+) -> Result<(), String> {
+    let bot_token = {
+        let bridge = state.slack_bridge.lock().unwrap();
+        match &*bridge {
+            Some(b) => b.bot_token().to_string(),
+            None => return Err("Slack not connected".into()),
+        }
+    }; // Mutex guard dropped here
+
+    let client = reqwest::Client::new();
+    crate::slack_bridge::responder::post_message(&client, &bot_token, &channel, &text).await
+}
+
+// ─────────────────────────────────────────────────────────────
 // Usage Commands
 // ─────────────────────────────────────────────────────────────
 

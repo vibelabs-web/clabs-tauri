@@ -5,6 +5,7 @@ mod pty;
 mod session;
 mod setup;
 mod skills;
+mod slack_bridge;
 mod stores;
 mod file_watcher;
 mod usage_api;
@@ -35,6 +36,8 @@ pub struct AppState {
     pub orchestrator: OrchestratorServer,
     /// Pending split requests: request_id → oneshot sender for new pane ID
     pub split_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>,
+    /// Slack Socket Mode bridge (optional)
+    pub slack_bridge: Mutex<Option<slack_bridge::SlackBridge>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -84,6 +87,7 @@ pub fn run() {
                 file_watcher: FileWatcherManager::new(),
                 orchestrator,
                 split_waiters: Mutex::new(HashMap::new()),
+                slack_bridge: Mutex::new(None),
             };
 
             app.manage(state);
@@ -100,6 +104,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Orchestrator
             commands::orchestrate_split_result,
+            // Slack
+            commands::slack_connect,
+            commands::slack_disconnect,
+            commands::slack_status,
+            commands::slack_send,
             // PTY
             commands::pty_spawn,
             commands::pty_write,

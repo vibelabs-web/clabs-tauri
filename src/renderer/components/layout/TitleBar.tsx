@@ -73,6 +73,8 @@ const TitleBar = memo(({
   const [isDragging, setIsDragging] = useState(false);
   const [dragTabId, setDragTabId] = useState<string | null>(null);
 
+  const isMac = /mac/i.test(navigator.platform) || /macintosh/i.test(navigator.userAgent);
+
   const handleMinimize = () => window.api.window.minimize();
   const handleMaximize = () => window.api.window.maximize();
   const handleClose = () => window.api.window.close();
@@ -101,8 +103,8 @@ const TitleBar = memo(({
       data-tauri-drag-region
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      {/* 좌측: 앱 타이틀 */}
-      <div className="flex items-center gap-2 px-4 flex-shrink-0">
+      {/* 좌측: 앱 타이틀 (macOS 신호등 공간 확보) */}
+      <div className={`flex items-center gap-2 flex-shrink-0 ${isMac ? 'pl-20 pr-2' : 'px-4'}`}>
         <h1 className="text-sm font-semibold text-text-primary">clabs</h1>
         <span className="text-xs text-text-disabled">|</span>
       </div>
@@ -182,33 +184,35 @@ const TitleBar = memo(({
         )}
       </div>
 
-      {/* 우측: 창 컨트롤 */}
-      <div
-        className="flex items-center gap-2 px-4 flex-shrink-0"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
-        <button
-          onClick={handleMinimize}
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-bg-hover transition-colors"
-          aria-label="Minimize window"
+      {/* 우측: 창 컨트롤 (macOS에서는 네이티브 신호등 사용, 커스텀 버튼 숨김) */}
+      {!isMac && (
+        <div
+          className="flex items-center gap-2 px-4 flex-shrink-0"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <MinimizeIcon />
-        </button>
-        <button
-          onClick={handleMaximize}
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-bg-hover transition-colors"
-          aria-label="Maximize window"
-        >
-          <MaximizeIcon />
-        </button>
-        <button
-          onClick={handleClose}
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-status-error/80 transition-colors"
-          aria-label="Close window"
-        >
-          <CloseIcon />
-        </button>
-      </div>
+          <button
+            onClick={handleMinimize}
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-bg-hover transition-colors"
+            aria-label="Minimize window"
+          >
+            <MinimizeIcon />
+          </button>
+          <button
+            onClick={handleMaximize}
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-bg-hover transition-colors"
+            aria-label="Maximize window"
+          >
+            <MaximizeIcon />
+          </button>
+          <button
+            onClick={handleClose}
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-status-error/80 transition-colors"
+            aria-label="Close window"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      )}
     </div>
   );
 });
