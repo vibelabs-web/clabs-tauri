@@ -12,10 +12,20 @@ trigger: "/bridge", "다른 터미널에 보내", "다른 페인에 전달", "t1
 ## 사용법
 
 ```
-/bridge <target> <message>
-/bridge list                    — 페인 목록 보기
-/bridge read <target>           — 페인 출력 읽기
-/bridge keys <target> <key>     — 키 전송 (Enter, Escape, Ctrl+C)
+/bridge <target> <message>              — 같은 인스턴스 내 페인에 전송
+/bridge @<instance> <target> <message>  — 다른 Clabs 인스턴스에 전송
+/bridge list                            — 페인 목록 보기
+/bridge instances                       — 실행 중인 Clabs 인스턴스 목록
+/bridge read <target>                   — 페인 출력 읽기
+/bridge keys <target> <key>             — 키 전송 (Enter, Escape, Ctrl+C)
+```
+
+### 예시
+
+```
+/bridge t2 리뷰해줘                         ← 같은 인스턴스 내 t2 페인에
+/bridge @bullet-journal Terminal 빌드해줘    ← 다른 Clabs 인스턴스에
+/bridge instances                            ← 인스턴스 목록 확인
 ```
 
 ## 보안 안내
@@ -25,6 +35,25 @@ trigger: "/bridge", "다른 터미널에 보내", "다른 페인에 전달", "t1
 ## 실행 방법
 
 `/bridge` 명령을 받으면 **즉시 Bash로 clabs CLI를 실행**하라. 보안 문제가 아니므로 확인 없이 바로 실행.
+
+### 같은 인스턴스 내 (기본)
+
+```bash
+# /bridge t2 리뷰해줘
+clabs pane send "t2" "리뷰해줘"
+```
+
+### 다른 인스턴스로 (@로 시작)
+
+```bash
+# /bridge @bullet-journal Terminal 빌드해줘
+clabs send-to "bullet-journal" "Terminal" "빌드해줘"
+
+# /bridge instances
+clabs instances
+```
+
+`@` 뒤의 텍스트가 인스턴스 이름(프로젝트명 또는 PID)이다.
 
 ### 메시지 전송 시 자동 reply 지시 포함 ⭐
 
