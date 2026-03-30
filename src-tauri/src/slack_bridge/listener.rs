@@ -309,11 +309,12 @@ async fn process_slack_command(
 
         if let Ok(content) = tokio::fs::read_to_string(&result_file).await {
             if !content.trim().is_empty() {
-                // Result file exists and has content — send to Slack
-                let truncated = if content.len() > 3500 {
-                    format!("{}...\n\n_({}자 중 일부)_", &content[..3500], content.len())
+                // Result file exists and has content — convert to Slack format and send
+                let slack_text = responder::md_to_slack(&content);
+                let truncated = if slack_text.len() > 3500 {
+                    format!("{}...\n\n_({}자 중 일부)_", &slack_text[..3500], slack_text.len())
                 } else {
-                    content
+                    slack_text
                 };
                 responder::post_message(http, bot_token, channel, &truncated)
                     .await.ok();
