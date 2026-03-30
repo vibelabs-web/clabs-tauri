@@ -1,6 +1,7 @@
 // TitleBar 컴포넌트 - 멀티탭 워크스페이스 지원
 
 import { memo, useCallback, useRef, useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import type { WorkspaceTab } from '@renderer/stores/workspace';
 
 interface TitleBarProps {
@@ -104,8 +105,21 @@ const TitleBar = memo(({
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* 좌측: 앱 타이틀 (macOS 신호등 공간 확보) */}
-      <div className={`flex items-center gap-2 flex-shrink-0 ${isMac ? 'pl-20 pr-2' : 'px-4'}`}>
+      <div
+        className={`flex items-center gap-1.5 flex-shrink-0 ${isMac ? 'pl-20 pr-2' : 'px-4'}`}
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <h1 className="text-sm font-semibold text-text-primary">clabs</h1>
+        <button
+          onClick={() => invoke('open_new_instance').catch(() => {})}
+          className="w-5 h-5 flex items-center justify-center rounded hover:bg-bg-hover transition-colors text-text-disabled hover:text-text-secondary"
+          title="새 창 열기 (새 인스턴스)"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <rect x="1" y="3" width="6" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" fill="none" />
+            <rect x="3" y="1" width="6" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" fill="none" />
+          </svg>
+        </button>
         <span className="text-xs text-text-disabled">|</span>
       </div>
 
