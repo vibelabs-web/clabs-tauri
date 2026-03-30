@@ -121,6 +121,16 @@ pub async fn pty_kill_all(state: State<'_, AppState>) -> Result<(), String> {
 // Orchestrator Commands
 // ─────────────────────────────────────────────────────────────
 
+/// Update instance name when project opens
+#[tauri::command]
+pub async fn orchestrate_set_instance_name(
+    _state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    crate::orchestrator::OrchestratorServer::update_instance_name(&name);
+    Ok(())
+}
+
 /// Register a pane name for name-based addressing
 #[tauri::command]
 pub async fn orchestrate_pane_name(

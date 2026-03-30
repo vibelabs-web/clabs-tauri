@@ -380,13 +380,24 @@ async fn handle_request(
                 None => return Response::error(req.id, "message required".into()),
             };
 
-            // Find target instance's socket from registry
+            // Find target instance's socket from registry (by ID or by name)
             let home = dirs::home_dir().unwrap_or_default();
             let registry_path = home.join(".clabs").join("instances.json");
             let socket_path = match std::fs::read_to_string(&registry_path) {
                 Ok(content) => {
                     let instances: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
-                    instances[&target_instance]["socket"].as_str().map(|s| s.to_string())
+                    // Try direct ID match first
+                    if let Some(socket) = instances[&target_instance]["socket"].as_str() {
+                        Some(socket.to_string())
+                    } else {
+                        // Try name match (case-insensitive)
+                        let target_lower = target_instance.to_lowercase();
+                        instances.as_object().and_then(|obj| {
+                            obj.values().find(|v| {
+                                v["name"].as_str().map(|n| n.to_lowercase() == target_lower).unwrap_or(false)
+                            }).and_then(|v| v["socket"].as_str().map(|s| s.to_string()))
+                        })
+                    }
                 }
                 Err(_) => None,
             };

@@ -74,10 +74,27 @@ impl OrchestratorServer {
         instances[instance_id] = serde_json::json!({
             "socket": socket_path.to_string_lossy(),
             "pid": std::process::id(),
+            "name": "",
             "started": chrono::Utc::now().to_rfc3339(),
         });
 
         std::fs::write(&registry_path, serde_json::to_string_pretty(&instances).unwrap_or_default()).ok();
+    }
+
+    /// Update instance name in registry (called when project opens)
+    pub fn update_instance_name(name: &str) {
+        let instance_id = format!("{}", std::process::id());
+        let home = dirs::home_dir().unwrap_or_default();
+        let registry_path = home.join(".clabs").join("instances.json");
+
+        if let Ok(content) = std::fs::read_to_string(&registry_path) {
+            if let Ok(mut instances) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(entry) = instances.get_mut(&instance_id) {
+                    entry["name"] = serde_json::Value::String(name.to_string());
+                    std::fs::write(&registry_path, serde_json::to_string_pretty(&instances).unwrap_or_default()).ok();
+                }
+            }
+        }
     }
 
     /// Remove instance from registry

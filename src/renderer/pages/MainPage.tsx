@@ -425,6 +425,10 @@ export default function MainPage() {
     if (tab && tab.spawnedPaneIds.size > 0) {
       setIsPtyRunning(true);
     }
+    // Update instance name for cross-instance discovery
+    if (tab?.project?.name) {
+      invoke('orchestrate_set_instance_name', { name: tab.project.name }).catch(() => {});
+    }
   }, [switchTab]);
 
   // 탭 닫기

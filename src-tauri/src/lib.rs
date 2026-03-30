@@ -128,6 +128,7 @@ pub fn run() {
             // Orchestrator
             commands::orchestrate_split_result,
             commands::orchestrate_pane_name,
+            commands::orchestrate_set_instance_name,
             // Slack
             commands::slack_connect,
             commands::slack_disconnect,
