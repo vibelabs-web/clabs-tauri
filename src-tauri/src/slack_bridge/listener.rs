@@ -184,19 +184,39 @@ async fn handle_ws_message(
                 let event_type = event["type"].as_str().unwrap_or("");
                 let subtype = event["subtype"].as_str();
 
-                // Only handle user messages (not bot messages)
+                // Only handle user messages (skip bot messages, system messages)
                 if event_type == "message" && subtype.is_none() {
                     let text = event["text"].as_str().unwrap_or("").to_string();
                     let channel = event["channel"].as_str().unwrap_or("").to_string();
                     let user = event["user"].as_str().unwrap_or("").to_string();
                     let ts = event["ts"].as_str().unwrap_or("").to_string();
+                    let channel_type = event["channel_type"].as_str().unwrap_or("");
 
-                    // Check if message mentions the bot
+                    // Skip bot's own messages
+                    if user == bot_user_id || user.is_empty() {
+                        return;
+                    }
+
+                    // Skip empty messages
+                    if text.trim().is_empty() {
+                        return;
+                    }
+
+                    // Determine if we should process this message:
+                    // - DM (channel_type "im"): always process (no @mention needed)
+                    // - Channel: only if @mentioned
                     let mention_tag = format!("<@{}>", bot_user_id);
-                    if text.contains(&mention_tag) {
+                    let is_dm = channel_type == "im" || channel.starts_with('D');
+                    let is_mentioned = text.contains(&mention_tag);
+
+                    if is_dm || is_mentioned {
                         let clean_text = text.replace(&mention_tag, "").trim().to_string();
 
-                        log::info!("[slack] Message from {}: {}", user, clean_text);
+                        if clean_text.is_empty() {
+                            return;
+                        }
+
+                        log::info!("[slack] {} from {}: {}", if is_dm { "DM" } else { "Mention" }, user, clean_text);
 
                         // Notify frontend
                         message_tx
