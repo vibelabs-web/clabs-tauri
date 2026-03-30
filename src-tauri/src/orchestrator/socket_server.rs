@@ -411,10 +411,12 @@ async fn handle_request(
             match std::os::unix::net::UnixStream::connect(&socket_path) {
                 Ok(mut stream) => {
                     use std::io::{Write, BufRead, BufReader};
+                    // Forward with both pane_id and name for proper resolution
                     let fwd_req = serde_json::json!({
                         "id": "fwd-1",
                         "action": "send",
-                        "pane_id": pane_id,
+                        "pane_id": req.pane_id,
+                        "name": req.name.as_deref().or(pane_id.as_deref()),
                         "message": message,
                     });
                     let mut json = serde_json::to_string(&fwd_req).unwrap();
