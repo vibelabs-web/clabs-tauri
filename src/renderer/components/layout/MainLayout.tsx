@@ -60,6 +60,7 @@ export interface MainLayoutProps {
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 500;
 const DEFAULT_SIDEBAR_WIDTH = 280;
+const COLLAPSED_SIDEBAR_WIDTH = 0;
 
 const MainLayout: React.FC<MainLayoutProps> = ({
   usage,
@@ -103,6 +104,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   onToggleBroadcast,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => !prev);
+  }, []);
   const [isResizing, setIsResizing] = useState(false);
   const [skillCommands, setSkillCommands] = useState<{ command: string; description: string }[]>([]);
   const [copied, setCopied] = useState(false);
@@ -209,26 +215,47 @@ const MainLayout: React.FC<MainLayoutProps> = ({
       <ToolbarBar onExecute={handleToolbarExecute} />
 
       <div ref={containerRef} className="flex flex-1 overflow-hidden">
-        <div
-          className="flex-shrink-0 border-r border-border-default overflow-hidden"
-          style={{ width: sidebarWidth }}
-        >
-          <SidebarContainer
-            workflow={workflow}
-            recommendation={recommendation}
-            onSkillSelect={handleSkillSelect}
-            onOpenCommandBuilder={onOpenCommandBuilder}
-            usage={usage}
-            projectPath={projectPath}
-          />
-        </div>
+        {/* 사이드바 (접기/펼치기) */}
+        {!sidebarCollapsed && (
+          <div
+            className="flex-shrink-0 border-r border-border-default overflow-hidden transition-all duration-200"
+            style={{ width: sidebarWidth }}
+          >
+            <SidebarContainer
+              workflow={workflow}
+              recommendation={recommendation}
+              onSkillSelect={handleSkillSelect}
+              onOpenCommandBuilder={onOpenCommandBuilder}
+              usage={usage}
+              projectPath={projectPath}
+            />
+          </div>
+        )}
 
-        <div
-          className={`w-1 flex-shrink-0 cursor-col-resize hover:bg-accent/50 transition-colors ${
-            isResizing ? 'bg-accent' : 'bg-transparent'
-          }`}
-          onMouseDown={handleMouseDown}
-        />
+        {/* 사이드바 토글 + 리사이즈 핸들 */}
+        <div className="flex-shrink-0 flex flex-col items-center">
+          <button
+            onClick={toggleSidebar}
+            className="w-5 h-8 flex items-center justify-center text-text-disabled hover:text-text-secondary hover:bg-bg-hover transition-colors mt-1 rounded"
+            title={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              {sidebarCollapsed ? (
+                <path d="M3 1L7 5L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              ) : (
+                <path d="M7 1L3 5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              )}
+            </svg>
+          </button>
+          {!sidebarCollapsed && (
+            <div
+              className={`flex-1 w-1 cursor-col-resize hover:bg-accent/50 transition-colors ${
+                isResizing ? 'bg-accent' : 'bg-transparent'
+              }`}
+              onMouseDown={handleMouseDown}
+            />
+          )}
+        </div>
 
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <div className="flex-1 overflow-hidden" style={{ position: 'relative' }}>
