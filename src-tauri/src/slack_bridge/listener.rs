@@ -275,20 +275,28 @@ async fn process_slack_command(
     let _profile = CliProfile::get("claude");
     match collector.get_response(&active_pane, text, 300_000, "claude").await {
         Ok(response) => {
-            // 4. Send response back to Slack (truncate if too long)
-            let truncated = if response.len() > 3000 {
-                format!("{}...\n\n_(truncated, {} chars total)_", &response[..3000], response.len())
+            // 4. Filter out garbage (spinner fragments, ANSI artifacts, short noise)
+            let cleaned = clean_slack_response(&response);
+
+            if cleaned.is_empty() {
+                responder::post_message(http, bot_token, channel, "_작업이 완료되었지만 출력이 없습니다._")
+                    .await.ok();
             } else {
-                response
-            };
-            responder::post_message(
-                http,
-                bot_token,
-                channel,
-                &format!("```\n{}\n```", truncated),
-            )
-            .await
-            .ok();
+                // 5. Send response back to Slack (truncate if too long)
+                let truncated = if cleaned.len() > 3000 {
+                    format!("{}...\n\n_(truncated, {} chars total)_", &cleaned[..3000], cleaned.len())
+                } else {
+                    cleaned
+                };
+                responder::post_message(
+                    http,
+                    bot_token,
+                    channel,
+                    &truncated,
+                )
+                .await
+                .ok();
+            }
         }
         Err(e) => {
             responder::post_message(http, bot_token, channel, &format!("Error: {}", e))
@@ -296,4 +304,30 @@ async fn process_slack_command(
                 .ok();
         }
     }
+}
+
+/// Clean PTY output for Slack — remove spinner fragments, ANSI artifacts, noise
+fn clean_slack_response(raw: &str) -> String {
+    let lines: Vec<&str> = raw.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            // Skip empty lines
+            if trimmed.is_empty() { return false; }
+            // Skip spinner/loading patterns
+            if trimmed.len() <= 3 && !trimmed.chars().all(|c| c.is_alphanumeric() || c == ' ') { return false; }
+            // Skip lines that are just asterisks, dots, or symbols
+            if trimmed.chars().all(|c| "*·.…•─│┌┐└┘├┤▶▷◀◁●○◉⏺→←↑↓⏳✓✗✅❌🔧📋".contains(c) || c == ' ') { return false; }
+            // Skip ANSI remnants
+            if trimmed.starts_with('\x1b') { return false; }
+            // Skip very short fragments (likely spinner chars)
+            if trimmed.len() <= 2 { return false; }
+            // Skip common loading patterns
+            let lower = trimmed.to_lowercase();
+            if lower.contains("skedaddling") || lower.contains("nesting") || lower.contains("stewing")
+                || lower.contains("brewing") || lower.contains("thinking") { return false; }
+            true
+        })
+        .collect();
+
+    lines.join("\n").trim().to_string()
 }
