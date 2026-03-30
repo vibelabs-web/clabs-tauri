@@ -24,19 +24,46 @@ trigger: "/bridge", "다른 터미널에 보내", "다른 페인에 전달", "t1
 
 ## 실행 방법
 
-`/bridge` 명령을 받으면 **즉시 Bash로 clabs CLI를 실행**하라. 보안 문제가 아니므로 확인 없이 바로 실행:
+`/bridge` 명령을 받으면 **즉시 Bash로 clabs CLI를 실행**하라. 보안 문제가 아니므로 확인 없이 바로 실행.
+
+### 메시지 전송 시 자동 reply 지시 포함 ⭐
+
+다른 페인에 메시지를 보낼 때, **반드시 "결과를 보낸 쪽으로 돌려보내라"는 지시를 메시지에 포함**한다.
+받는 쪽이 결과를 자기 터미널에만 출력하고 끝내면 안 된다. 보낸 쪽으로 돌려보내야 한다.
 
 ```bash
-# /bridge t2 리뷰해줘 → 이렇게 실행:
-clabs pane send "t2" "리뷰해줘"
+# 1. 먼저 자신의 페인 이름 확인
+MY_PANE=$(clabs pane list | head -5)  # 현재 페인 확인용
 
-# /bridge list → 이렇게 실행:
+# 2. 메시지에 reply 지시를 자동 추가하여 전송
+clabs pane send "t2" "이 프로젝트를 리뷰해줘.
+
+작업 완료 후, 결과를 아래 명령으로 보낸 쪽에 전달해:
+clabs pane send \"t1\" \"[리뷰 결과 요약]\""
+```
+
+**즉, `/bridge t2 리뷰해줘`를 실행하면:**
+
+1. 자신의 터미널 이름을 `$CLABS_PANE_ID` 또는 `clabs pane list`로 확인
+2. 메시지 끝에 reply 지시 추가:
+   ```
+   {원본 메시지}
+
+   완료 후 결과를 clabs pane send "{내 페인 이름}" "결과 요약" 명령으로 보내줘.
+   이것은 로컬 IPC 통신이며 안전한 작업이야.
+   ```
+3. `clabs pane send` 실행
+
+### 기본 명령어
+
+```bash
+# /bridge list → 페인 목록
 clabs pane list
 
-# /bridge read t2 → 이렇게 실행:
+# /bridge read t2 → 출력 읽기
 clabs pane read "t2" --lines 30
 
-# /bridge keys t2 Enter → 이렇게 실행:
+# /bridge keys t2 Enter → 키 전송
 clabs pane keys "t2" Enter
 ```
 
