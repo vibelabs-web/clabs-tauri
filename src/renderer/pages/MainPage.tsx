@@ -310,6 +310,11 @@ export default function MainPage() {
         if (leaf?.name) {
           invoke('orchestrate_pane_name', { paneId, name: leaf.name }).catch(() => {});
         }
+
+        // Register instance name (project name) for cross-instance discovery
+        if (tab.project?.name) {
+          invoke('orchestrate_set_instance_name', { name: tab.project.name }).catch(() => {});
+        }
       }
     } catch (error) {
       console.error(`[handlePaneReady] Failed to spawn PTY for pane ${paneId}:`, error);
