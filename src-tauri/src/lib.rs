@@ -126,6 +126,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             // Orchestrator
+            commands::open_new_instance,
             commands::orchestrate_split_result,
             commands::orchestrate_pane_name,
             commands::orchestrate_set_instance_name,

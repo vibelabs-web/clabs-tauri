@@ -81,6 +81,18 @@ export default function MainPage() {
   const { setTurns } = useTimelineStore();
   const { addChange } = useDiffStore();
 
+  // Cmd+Shift+N → 새 Clabs 인스턴스 열기
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        invoke('open_new_instance').catch(console.error);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   // Usage 업데이트 구독
   useEffect(() => {
     if (window.api?.usage?.onUpdate) {

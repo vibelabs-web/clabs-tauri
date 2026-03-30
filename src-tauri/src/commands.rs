@@ -121,6 +121,37 @@ pub async fn pty_kill_all(state: State<'_, AppState>) -> Result<(), String> {
 // Orchestrator Commands
 // ─────────────────────────────────────────────────────────────
 
+/// Open a new Clabs instance (Cmd+Shift+N)
+#[tauri::command]
+pub async fn open_new_instance() -> Result<(), String> {
+    // macOS: open -n to force new instance
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        // Find the .app bundle (go up from MacOS/clabs to Clabs.app)
+        let app_path = exe.parent() // MacOS/
+            .and_then(|p| p.parent()) // Contents/
+            .and_then(|p| p.parent()); // Clabs.app/
+
+        if let Some(app) = app_path {
+            std::process::Command::new("open")
+                .args(["-n", &app.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("Failed to open new instance: {}", e))?;
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        std::process::Command::new(&exe)
+            .spawn()
+            .map_err(|e| format!("Failed to open new instance: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// Update instance name when project opens
 #[tauri::command]
 pub async fn orchestrate_set_instance_name(
