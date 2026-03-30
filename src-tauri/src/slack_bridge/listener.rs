@@ -252,10 +252,10 @@ async fn process_slack_command(
     channel: &str,
     text: &str,
     pty_pool: &Arc<PtyPoolManager>,
-    collector: &Arc<ResponseCollector>,
+    _collector: &Arc<ResponseCollector>,
 ) {
     // 1. Send "processing" message
-    responder::post_message(http, bot_token, channel, &format!(">> {}\n\n_Processing..._", text))
+    responder::post_message(http, bot_token, channel, &format!("> {}\n_처리 중..._", text))
         .await
         .ok();
 
@@ -271,37 +271,77 @@ async fn process_slack_command(
         }
     };
 
-    // 3. Send to Claude Code and wait for response
-    let _profile = CliProfile::get("claude");
-    match collector.get_response(&active_pane, text, 300_000, "claude").await {
-        Ok(response) => {
-            // 4. Filter out garbage (spinner fragments, ANSI artifacts, short noise)
-            let cleaned = clean_slack_response(&response);
+    // 3. Strategy: Tell Claude Code to write result to a file, then read it
+    // This avoids PTY buffer noise (spinners, ANSI codes, tool output)
+    let result_file = format!("/tmp/slack-response-{}.md", std::process::id());
 
-            if cleaned.is_empty() {
-                responder::post_message(http, bot_token, channel, "_작업이 완료되었지만 출력이 없습니다._")
-                    .await.ok();
-            } else {
-                // 5. Send response back to Slack (truncate if too long)
-                let truncated = if cleaned.len() > 3000 {
-                    format!("{}...\n\n_(truncated, {} chars total)_", &cleaned[..3000], cleaned.len())
-                } else {
-                    cleaned
-                };
-                responder::post_message(
-                    http,
-                    bot_token,
-                    channel,
-                    &truncated,
-                )
-                .await
-                .ok();
-            }
+    // Build the augmented prompt: original request + file output instruction
+    let augmented = format!(
+        "{}\n\n위 작업을 수행한 후, 결과 요약을 {} 파일에 마크다운으로 작성해. 파일에는 핵심 결과만 간결하게 담아.",
+        text, result_file
+    );
+
+    // 4. Send to Claude Code (text + Enter with delay)
+    let trimmed = augmented.trim();
+    match pty_pool.write(&active_pane, trimmed) {
+        Ok(()) => {
+            let delay_ms = if trimmed.len() > 1000 { 2000 }
+                else if trimmed.len() > 200 { 1000 }
+                else { 300 };
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+            pty_pool.write(&active_pane, "\r").ok();
         }
         Err(e) => {
-            responder::post_message(http, bot_token, channel, &format!("Error: {}", e))
-                .await
-                .ok();
+            responder::post_message(http, bot_token, channel, &format!("PTY error: {}", e))
+                .await.ok();
+            return;
+        }
+    }
+
+    // 5. Poll for result file (check every 10s, up to 10 minutes)
+    let max_wait = 600; // seconds
+    let poll_interval = 10; // seconds
+    let mut elapsed = 0;
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(poll_interval)).await;
+        elapsed += poll_interval;
+
+        if let Ok(content) = tokio::fs::read_to_string(&result_file).await {
+            if !content.trim().is_empty() {
+                // Result file exists and has content — send to Slack
+                let truncated = if content.len() > 3500 {
+                    format!("{}...\n\n_({}자 중 일부)_", &content[..3500], content.len())
+                } else {
+                    content
+                };
+                responder::post_message(http, bot_token, channel, &truncated)
+                    .await.ok();
+
+                // Clean up
+                tokio::fs::remove_file(&result_file).await.ok();
+                return;
+            }
+        }
+
+        if elapsed >= max_wait {
+            // Timeout — try reading PTY buffer as fallback
+            let fallback = pty_pool.get_recent_output(&active_pane, 30)
+                .map(|chunks| {
+                    let raw = chunks.join("");
+                    let cleaned = clean_slack_response(&crate::orchestrator::ansi::strip_ansi(&raw));
+                    if cleaned.len() > 100 { cleaned } else { String::new() }
+                })
+                .unwrap_or_default();
+
+            if !fallback.is_empty() {
+                responder::post_message(http, bot_token, channel, &format!("_10분 경과. 마지막 출력:_\n```\n{}\n```", fallback))
+                    .await.ok();
+            } else {
+                responder::post_message(http, bot_token, channel, "_10분 경과. 작업이 아직 진행 중일 수 있습니다. Clabs 앱에서 확인해주세요._")
+                    .await.ok();
+            }
+            return;
         }
     }
 }
