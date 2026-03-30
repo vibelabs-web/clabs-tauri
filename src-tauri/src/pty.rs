@@ -124,7 +124,17 @@ impl PtyPoolManager {
 
         // Orchestrator: inter-pane communication 환경변수
         cmd.env("CLABS_PANE_ID", pane_id);
-        let socket_path = home_dir.join(".clabs").join("sock");
+        // Socket path is set dynamically by orchestrator (instance-specific)
+        // Default fallback: find any socket in ~/.clabs/
+        let clabs_dir = home_dir.join(".clabs");
+        let socket_path = if let Ok(entries) = std::fs::read_dir(&clabs_dir) {
+            entries.filter_map(|e| e.ok())
+                .find(|e| e.file_name().to_string_lossy().starts_with("sock-"))
+                .map(|e| e.path())
+                .unwrap_or_else(|| clabs_dir.join("sock"))
+        } else {
+            clabs_dir.join("sock")
+        };
         cmd.env("CLABS_SOCKET", socket_path.to_string_lossy().as_ref());
         cmd.env("CLABS_APP", "1");
 

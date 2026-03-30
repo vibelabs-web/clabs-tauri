@@ -10,14 +10,23 @@ use tauri::AppHandle;
 
 pub struct OrchestratorServer {
     socket_path: PathBuf,
+    instance_id: String,
 }
 
 impl OrchestratorServer {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        // Generate unique instance ID from PID
+        let instance_id = format!("{}", std::process::id());
+        let socket_name = format!("sock-{}", instance_id);
         Self {
-            socket_path: home.join(".clabs").join("sock"),
+            socket_path: home.join(".clabs").join(&socket_name),
+            instance_id,
         }
+    }
+
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 
     /// Get the socket path (for env var injection)
@@ -42,7 +51,48 @@ impl OrchestratorServer {
             socket_server::run_socket_server(path, pty_pool, app).await;
         });
 
-        log::info!("Orchestrator server started at {:?}", self.socket_path);
+        // Register this instance in ~/.clabs/instances.json
+        Self::register_instance(&self.instance_id, &self.socket_path);
+
+        log::info!("Orchestrator server started at {:?} (instance: {})", self.socket_path, self.instance_id);
+    }
+
+    /// Register instance in shared registry so other Clabs apps can discover it
+    fn register_instance(instance_id: &str, socket_path: &PathBuf) {
+        let home = dirs::home_dir().unwrap_or_default();
+        let registry_path = home.join(".clabs").join("instances.json");
+
+        let mut instances: serde_json::Value = if registry_path.exists() {
+            std::fs::read_to_string(&registry_path)
+                .ok()
+                .and_then(|c| serde_json::from_str(&c).ok())
+                .unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        instances[instance_id] = serde_json::json!({
+            "socket": socket_path.to_string_lossy(),
+            "pid": std::process::id(),
+            "started": chrono::Utc::now().to_rfc3339(),
+        });
+
+        std::fs::write(&registry_path, serde_json::to_string_pretty(&instances).unwrap_or_default()).ok();
+    }
+
+    /// Remove instance from registry
+    fn unregister_instance(instance_id: &str) {
+        let home = dirs::home_dir().unwrap_or_default();
+        let registry_path = home.join(".clabs").join("instances.json");
+
+        if let Ok(content) = std::fs::read_to_string(&registry_path) {
+            if let Ok(mut instances) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = instances.as_object_mut() {
+                    obj.remove(instance_id);
+                    std::fs::write(&registry_path, serde_json::to_string_pretty(&instances).unwrap_or_default()).ok();
+                }
+            }
+        }
     }
 
     /// Install the clabs-cli binary to ~/.clabs/bin/clabs so it's in PATH
@@ -96,10 +146,11 @@ impl OrchestratorServer {
         }
     }
 
-    /// Clean up socket file on shutdown
+    /// Clean up socket file and unregister on shutdown
     pub fn stop(&self) {
         std::fs::remove_file(&self.socket_path).ok();
-        log::info!("Orchestrator socket removed");
+        Self::unregister_instance(&self.instance_id);
+        log::info!("Orchestrator socket removed, instance {} unregistered", self.instance_id);
     }
 }
 

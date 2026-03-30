@@ -18,6 +18,8 @@ struct Request {
     cli_type: Option<String>,
     max_lines: Option<usize>,
     direction: Option<String>,
+    instance_id: Option<String>,  // for cross-instance communication
+    cmux_target: Option<String>,  // for cmux send
 }
 
 #[derive(Serialize)]
@@ -351,6 +353,99 @@ async fn handle_request(
                     }
                     Response::error(req.id, "Split request timed out (15s)".into())
                 }
+            }
+        }
+
+        // List all running Clabs instances
+        "list-instances" => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let registry_path = home.join(".clabs").join("instances.json");
+            let instances = if let Ok(content) = std::fs::read_to_string(&registry_path) {
+                serde_json::from_str::<serde_json::Value>(&content).unwrap_or(serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+            Response::success(req.id, instances)
+        }
+
+        // Send message to another Clabs instance
+        "send-external" => {
+            let target_instance = match &req.instance_id {
+                Some(id) => id.clone(),
+                None => return Response::error(req.id, "instance_id required".into()),
+            };
+            let pane_id = req.pane_id.as_deref().or(req.name.as_deref());
+            let message = match &req.message {
+                Some(m) => m.clone(),
+                None => return Response::error(req.id, "message required".into()),
+            };
+
+            // Find target instance's socket from registry
+            let home = dirs::home_dir().unwrap_or_default();
+            let registry_path = home.join(".clabs").join("instances.json");
+            let socket_path = match std::fs::read_to_string(&registry_path) {
+                Ok(content) => {
+                    let instances: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+                    instances[&target_instance]["socket"].as_str().map(|s| s.to_string())
+                }
+                Err(_) => None,
+            };
+
+            let socket_path = match socket_path {
+                Some(p) => p,
+                None => return Response::error(req.id, format!("Instance '{}' not found", target_instance)),
+            };
+
+            // Connect to target instance's socket and forward the send command
+            match std::os::unix::net::UnixStream::connect(&socket_path) {
+                Ok(mut stream) => {
+                    use std::io::{Write, BufRead, BufReader};
+                    let fwd_req = serde_json::json!({
+                        "id": "fwd-1",
+                        "action": "send",
+                        "pane_id": pane_id,
+                        "message": message,
+                    });
+                    let mut json = serde_json::to_string(&fwd_req).unwrap();
+                    json.push('\n');
+                    stream.write_all(json.as_bytes()).ok();
+                    stream.flush().ok();
+
+                    let mut reader = BufReader::new(stream);
+                    let mut resp_line = String::new();
+                    reader.read_line(&mut resp_line).ok();
+
+                    Response::success(req.id, serde_json::json!({"forwarded": true, "target": target_instance}))
+                }
+                Err(e) => Response::error(req.id, format!("Cannot connect to instance '{}': {}", target_instance, e)),
+            }
+        }
+
+        // Send message to cmux (one-way: clabs → cmux)
+        "send-cmux" => {
+            let target = match &req.cmux_target {
+                Some(t) => t.clone(),
+                None => return Response::error(req.id, "cmux_target required".into()),
+            };
+            let message = match &req.message {
+                Some(m) => m.clone(),
+                None => return Response::error(req.id, "message required".into()),
+            };
+
+            // Use cmux CLI to send (cmux send-surface)
+            let output = std::process::Command::new("cmux")
+                .args(["send", &target, &message])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    Response::success(req.id, serde_json::json!({"cmux_sent": true, "target": target}))
+                }
+                Ok(out) => {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    Response::error(req.id, format!("cmux error: {}", err))
+                }
+                Err(e) => Response::error(req.id, format!("cmux not found or failed: {}", e)),
             }
         }
 
