@@ -351,6 +351,10 @@ export default function MainPage() {
     }
     unmarkPaneSpawned(activeTab.id, paneId);
     closePaneInTab(activeTab.id, paneId);
+    // 남은 터미널이 새 크기에 맞게 refit하도록 강제 리사이즈 이벤트 발생
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
     console.log(`Closed pane ${paneId}`);
   }, [activeTab, closePaneInTab, unmarkPaneSpawned]);
 

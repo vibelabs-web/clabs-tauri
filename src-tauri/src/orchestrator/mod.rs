@@ -71,6 +71,30 @@ impl OrchestratorServer {
             serde_json::json!({})
         };
 
+        // 죽은 프로세스의 stale 엔트리 정리
+        if let Some(obj) = instances.as_object_mut() {
+            let stale_keys: Vec<String> = obj.iter()
+                .filter(|(_, v)| {
+                    if let Some(pid) = v["pid"].as_u64() {
+                        !is_pid_alive(pid as u32)
+                    } else {
+                        true // PID 없으면 stale로 간주
+                    }
+                })
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in &stale_keys {
+                // stale 소켓 파일도 정리
+                if let Some(sock) = obj.get(key).and_then(|v| v["socket"].as_str()) {
+                    std::fs::remove_file(sock).ok();
+                }
+                obj.remove(key);
+            }
+            if !stale_keys.is_empty() {
+                log::info!("Cleaned {} stale instance(s) from registry", stale_keys.len());
+            }
+        }
+
         instances[instance_id] = serde_json::json!({
             "socket": socket_path.to_string_lossy(),
             "pid": std::process::id(),
@@ -175,4 +199,16 @@ impl Drop for OrchestratorServer {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Check if a process with the given PID is still alive
+pub fn is_pid_alive(pid: u32) -> bool {
+    // kill -0 checks if process exists without sending a signal
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }

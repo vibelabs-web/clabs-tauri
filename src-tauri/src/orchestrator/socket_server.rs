@@ -386,15 +386,24 @@ async fn handle_request(
             let socket_path = match std::fs::read_to_string(&registry_path) {
                 Ok(content) => {
                     let instances: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
-                    // Try direct ID match first
-                    if let Some(socket) = instances[&target_instance]["socket"].as_str() {
-                        Some(socket.to_string())
-                    } else {
-                        // Try name match (case-insensitive)
+                    // Try direct ID match first (PID alive check)
+                    let direct = instances[&target_instance]["socket"].as_str()
+                        .and_then(|s| {
+                            let pid = instances[&target_instance]["pid"].as_u64().unwrap_or(0) as u32;
+                            if pid > 0 && super::is_pid_alive(pid) {
+                                Some(s.to_string())
+                            } else { None }
+                        });
+                    if direct.is_some() { direct } else {
+                        // Try name match (case-insensitive, only alive processes)
                         let target_lower = target_instance.to_lowercase();
                         instances.as_object().and_then(|obj| {
                             obj.values().find(|v| {
-                                v["name"].as_str().map(|n| n.to_lowercase() == target_lower).unwrap_or(false)
+                                let name_match = v["name"].as_str().map(|n| n.to_lowercase() == target_lower).unwrap_or(false);
+                                let pid_alive = v["pid"].as_u64()
+                                    .map(|pid| super::is_pid_alive(pid as u32))
+                                    .unwrap_or(false);
+                                name_match && pid_alive
                             }).and_then(|v| v["socket"].as_str().map(|s| s.to_string()))
                         })
                     }
@@ -407,6 +416,25 @@ async fn handle_request(
                 None => return Response::error(req.id, format!("Instance '{}' not found", target_instance)),
             };
 
+            // 발신자 인스턴스 이름 조회 (회신 주소용)
+            let sender_name: String = if let Some(state) = app.try_state::<crate::AppState>() {
+                let instance_id = format!("{}", std::process::id());
+                let home = dirs::home_dir().unwrap_or_default();
+                let registry_path_s = home.join(".clabs").join("instances.json");
+                std::fs::read_to_string(&registry_path_s).ok()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|v| v[&instance_id]["name"].as_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| instance_id)
+            } else {
+                format!("{}", std::process::id())
+            };
+
+            // 메시지에 발신자 정보 + /bridge 스킬로 회신 지시
+            let wrapped_message = format!(
+                "[다른 Clabs 인스턴스 \"{}\"에서 온 메시지]\n{}\n\n[필수] 완료 후 /bridge @{} 응답내용 으로 회신하라.",
+                sender_name, message, sender_name
+            );
+
             // Connect to target instance's socket and forward the send command
             match std::os::unix::net::UnixStream::connect(&socket_path) {
                 Ok(mut stream) => {
@@ -417,7 +445,7 @@ async fn handle_request(
                         "action": "send",
                         "pane_id": req.pane_id,
                         "name": req.name.as_deref().or(pane_id.as_deref()),
-                        "message": message,
+                        "message": wrapped_message,
                     });
                     let mut json = serde_json::to_string(&fwd_req).unwrap();
                     json.push('\n');

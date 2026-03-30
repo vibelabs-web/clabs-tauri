@@ -126,6 +126,22 @@ pre {
   background-color: var(--color-bg-secondary);
 }
 
+/* Fix: Tauri WKWebView에서 xterm.js CJK IME(한글/중국어/일본어) 입력 안 되는 문제
+   xterm v5의 helper textarea가 z-index:-5로 캔버스 뒤에 위치하면
+   WKWebView가 IME를 활성화하지 않음 → z-index를 올려서 해결 */
+.xterm .xterm-helper-textarea {
+  z-index: 10 !important;
+  opacity: 0 !important;
+  pointer-events: auto !important;
+}
+
+/* IME 조합 중 표시되는 xterm의 composition view */
+.xterm .composition-view {
+  z-index: 11 !important;
+  background: var(--color-bg-secondary) !important;
+  color: var(--color-text-primary) !important;
+}
+
 /* ===== 컴포넌트 유틸리티 클래스 ===== */
 
 /* 스킬 버튼 */

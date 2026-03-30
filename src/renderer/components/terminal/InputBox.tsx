@@ -143,7 +143,11 @@ export function InputBox({
   }, [onChange, closeDropdown]);
 
   const handleCompositionStart = () => { isComposingRef.current = true; };
-  const handleCompositionEnd = () => { isComposingRef.current = false; };
+  const handleCompositionEnd = () => {
+    // 일부 Mac/브라우저에서 compositionend가 다음 keydown보다 늦게 발생하는 문제 대응
+    // 짧은 지연으로 keydown에서 아직 조합 중으로 판단하도록 보장
+    setTimeout(() => { isComposingRef.current = false; }, 20);
+  };
 
   const handleChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value);
@@ -259,6 +263,10 @@ export function InputBox({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
 
+    // 한글 IME 조합 중 감지 (isComposingRef + 브라우저 네이티브 + keyCode 229)
+    // 다른 Mac/브라우저 환경에서도 안정적으로 동작하도록 3중 체크
+    const isCurrentlyComposing = isComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229;
+
     // 드롭다운 열려있을 때 네비게이션
     if (dropdownMode && dropdownItems.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -304,7 +312,7 @@ export function InputBox({
         onRawKey('\x1b[B');
         return;
       }
-      if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
+      if (e.key === 'Enter' && !e.shiftKey && !isCurrentlyComposing) {
         e.preventDefault();
         onRawKey('\r');
         return;
@@ -324,7 +332,7 @@ export function InputBox({
 
     if (e.key === 'Enter') {
       if (e.shiftKey) return;
-      if (isComposingRef.current) return;
+      if (isCurrentlyComposing) return;
       e.preventDefault();
       handleSubmitClick();
     }

@@ -184,7 +184,8 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
             fitAddonRef.current.fit();
 
             const { cols, rows } = t;
-            if (cols !== lastCols || rows !== lastRows) {
+            // PTY에 0 크기 전송 방지 (split 직후 컨테이너가 작을 때 PTY 죽음 방지)
+            if (cols > 0 && rows > 0 && (cols !== lastCols || rows !== lastRows)) {
               lastCols = cols;
               lastRows = rows;
               if (window.api?.pty) {
@@ -228,15 +229,24 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           if (disposedRef.current) return;
           const entry = entries[0];
           if (entry && entry.isIntersecting && entry.intersectionRatio > 0) {
-            // 터미널이 다시 보이면 refit + 스크롤 복원
+            // 터미널이 다시 보이면 refit + 캔버스 강제 리페인트 + 스크롤 복원
             setTimeout(() => {
               if (!disposedRef.current && fitAddonRef.current && terminalRef.current) {
                 doFit();
+                // display:none에서 복귀 시 xterm 캔버스가 빈 화면이 되는 버그 수정
+                terminalRef.current.refresh(0, terminalRef.current.rows - 1);
                 terminalRef.current.scrollToBottom();
               }
-            }, 100);
+            }, 50);
+            // 이중 안전장치: 첫 번째 refit이 타이밍 문제로 실패할 경우 대비
+            setTimeout(() => {
+              if (!disposedRef.current && fitAddonRef.current && terminalRef.current) {
+                doFit();
+                terminalRef.current.refresh(0, terminalRef.current.rows - 1);
+              }
+            }, 300);
           }
-        }, { threshold: 0.1 });
+        }, { threshold: 0.01 });
         visibilityObserver.observe(container);
 
         // ─── 키보드 핸들러 ───
@@ -324,6 +334,35 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           });
         }
 
+        // ─── CJK IME 폴백 (Tauri WKWebView 한글 입력 지원) ───
+        // xterm.js의 내장 composition 처리가 Tauri WKWebView에서 실패할 경우
+        // 직접 compositionend 이벤트를 감지하여 조합된 텍스트를 PTY로 전송
+        const xtermTextarea = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+        let imeComposing = false;
+        let imeFallbackHandler: (() => void) | null = null;
+        if (xtermTextarea) {
+          const onCompStart = () => { imeComposing = true; };
+          const onCompEnd = (e: Event) => {
+            imeComposing = false;
+            const ce = e as CompositionEvent;
+            // xterm이 이미 처리한 경우 중복 전송 방지:
+            // compositionend 시점에 textarea가 비어있으면 xterm이 처리한 것
+            // textarea에 텍스트가 남아있으면 xterm이 처리 못한 것 → 폴백
+            requestAnimationFrame(() => {
+              if (xtermTextarea.value && ce.data && onData && !disposedRef.current) {
+                onData(ce.data);
+                xtermTextarea.value = '';
+              }
+            });
+          };
+          xtermTextarea.addEventListener('compositionstart', onCompStart);
+          xtermTextarea.addEventListener('compositionend', onCompEnd);
+          imeFallbackHandler = () => {
+            xtermTextarea.removeEventListener('compositionstart', onCompStart);
+            xtermTextarea.removeEventListener('compositionend', onCompEnd);
+          };
+        }
+
         terminal.focus();
 
         if (onReady && !onReadyCalledRef.current) {
@@ -340,6 +379,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           if (fitDebounceTimer) clearTimeout(fitDebounceTimer);
           if (initialFitTimer) { clearTimeout(initialFitTimer); initialFitTimer = null; }
           if (unsubscribe) unsubscribe();
+          if (imeFallbackHandler) imeFallbackHandler();
 
           const term = terminalRef.current;
           terminalRef.current = null;

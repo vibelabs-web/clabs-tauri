@@ -301,6 +301,11 @@ impl PtyPoolManager {
     }
 
     pub fn resize(&self, pane_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+        // 0 크기 리사이즈 방지 (split 직후 컨테이너가 작을 때 PTY 크래시 방지)
+        if cols == 0 || rows == 0 {
+            log::warn!("PTY {} resize ignored: invalid size {}x{}", pane_id, cols, rows);
+            return Ok(());
+        }
         let pool = self.pool.lock().unwrap();
         if let Some(entry) = pool.get(pane_id) {
             entry
