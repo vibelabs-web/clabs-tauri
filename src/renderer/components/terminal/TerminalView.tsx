@@ -334,35 +334,6 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           });
         }
 
-        // ─── CJK IME 폴백 (Tauri WKWebView 한글 입력 지원) ───
-        // xterm.js의 내장 composition 처리가 Tauri WKWebView에서 실패할 경우
-        // 직접 compositionend 이벤트를 감지하여 조합된 텍스트를 PTY로 전송
-        const xtermTextarea = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
-        let imeComposing = false;
-        let imeFallbackHandler: (() => void) | null = null;
-        if (xtermTextarea) {
-          const onCompStart = () => { imeComposing = true; };
-          const onCompEnd = (e: Event) => {
-            imeComposing = false;
-            const ce = e as CompositionEvent;
-            // xterm이 이미 처리한 경우 중복 전송 방지:
-            // compositionend 시점에 textarea가 비어있으면 xterm이 처리한 것
-            // textarea에 텍스트가 남아있으면 xterm이 처리 못한 것 → 폴백
-            requestAnimationFrame(() => {
-              if (xtermTextarea.value && ce.data && onData && !disposedRef.current) {
-                onData(ce.data);
-                xtermTextarea.value = '';
-              }
-            });
-          };
-          xtermTextarea.addEventListener('compositionstart', onCompStart);
-          xtermTextarea.addEventListener('compositionend', onCompEnd);
-          imeFallbackHandler = () => {
-            xtermTextarea.removeEventListener('compositionstart', onCompStart);
-            xtermTextarea.removeEventListener('compositionend', onCompEnd);
-          };
-        }
-
         terminal.focus();
 
         if (onReady && !onReadyCalledRef.current) {
@@ -379,7 +350,6 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           if (fitDebounceTimer) clearTimeout(fitDebounceTimer);
           if (initialFitTimer) { clearTimeout(initialFitTimer); initialFitTimer = null; }
           if (unsubscribe) unsubscribe();
-          if (imeFallbackHandler) imeFallbackHandler();
 
           const term = terminalRef.current;
           terminalRef.current = null;

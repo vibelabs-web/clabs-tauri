@@ -78,6 +78,7 @@ export function PaneView({
         overflow: 'hidden',
       }}
       className={isActive ? 'ring-1 ring-accent/50' : ''}
+      data-pane-id={pane.id}
       onClick={() => onPaneClick(pane.id)}
     >
       <PaneHeader

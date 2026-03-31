@@ -143,13 +143,16 @@ export function InputBox({
   }, [onChange, closeDropdown]);
 
   const handleCompositionStart = () => { isComposingRef.current = true; };
-  const handleCompositionEnd = () => {
-    // 일부 Mac/브라우저에서 compositionend가 다음 keydown보다 늦게 발생하는 문제 대응
-    // 짧은 지연으로 keydown에서 아직 조합 중으로 판단하도록 보장
-    setTimeout(() => { isComposingRef.current = false; }, 20);
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    isComposingRef.current = false;
+    // 조합 완료 후 최종 값으로 부모 state 업데이트
+    onChange((e.target as HTMLTextAreaElement).value);
   };
 
   const handleChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    // IME 조합 중에는 부모 state 업데이트를 건너뛴다
+    // React controlled input이 조합 중 textarea.value를 리셋하여 한글이 깨지는 것 방지
+    if (isComposingRef.current) return;
     onChange(e.target.value);
   };
 

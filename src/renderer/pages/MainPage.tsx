@@ -261,6 +261,12 @@ export default function MainPage() {
         if (active?.tagName === 'TEXTAREA' && (active as HTMLElement).dataset.testid === 'input-box') {
           return;
         }
+        // ESC를 누른 요소가 현재 활성 페인에 속하는지 확인
+        // 다른 페인에서 누른 ESC가 활성 페인으로 전파되는 것 방지
+        const activePaneEl = document.querySelector(`[data-pane-id="${activeTab.activePaneId}"]`);
+        if (activePaneEl && active && !activePaneEl.contains(active as Node)) {
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         writeAbortRef.current = true;
