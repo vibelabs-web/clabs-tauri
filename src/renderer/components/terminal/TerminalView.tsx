@@ -139,6 +139,71 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
 
         terminal.open(container);
 
+        // ─── WKWebView 한글 IME 픽스 ───
+        // WKWebView는 compositionstart/end 대신 input(insertReplacementText)으로 한글 조합을 처리한다.
+        // xterm의 kc=229 처리는 attachCustomKeyEventHandler에서 return false로 차단.
+        //
+        // 각 키입력마다 WKWebView가 보내는 이벤트 시퀀스:
+        //   A) 조합 중:  insertReplacementText(새글자) → insertText(새글자, 중복)
+        //   B) 음절경계: insertText(확정글자, commit) → insertReplacementText(새자모) → insertText(중복)
+        //   C) 스페이스: insertText(확정글자, commit) 후 xterm이 ' ' 전송
+        //
+        // justHandledReplacement 플래그로 중복 insertText와 commit insertText를 구분.
+        // ta.value 는 건드리지 않음 — WKWebView IME가 내부 composition 상태 추적에 사용하므로
+        // 초기화하면 IME가 리셋되어 이후 글자가 사라지는 버그 발생.
+        {
+          const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+          if (ta && onData) {
+            let sent = '';           // 현재 PTY에 보낸 조합 텍스트
+            let justHandledReplacement = false;
+
+            const isKorean = (s: string) => !!s && [...s].some(c => {
+              const cp = c.codePointAt(0)!;
+              return (cp >= 0x3131 && cp <= 0x3163) || (cp >= 0xAC00 && cp <= 0xD7A3);
+            });
+
+            ta.addEventListener('keydown', (e: KeyboardEvent) => {
+              if (e.keyCode !== 229) {
+                justHandledReplacement = false;
+                // Enter/Escape/Ctrl+C는 조합을 완전히 종료 → sent 초기화
+                // Space는 초기화하지 않음 — WKWebView가 commit insertText를 보내줌
+                if (e.key === 'Enter' || e.key === 'Escape' || (e.ctrlKey && e.key === 'c')) {
+                  sent = '';
+                }
+              }
+            });
+
+            ta.addEventListener('input', (e: Event) => {
+              const ie = e as InputEvent;
+              const data = ie.data || '';
+              if (!isKorean(data)) return;
+
+              if (ie.inputType === 'insertReplacementText') {
+                // 이전 조합 글자를 PTY에서 지우기
+                if (sent) {
+                  onData('\x7f'.repeat([...sent].length));
+                }
+                sent = data;
+                onData(data);
+                justHandledReplacement = true;
+              } else if (ie.inputType === 'insertText') {
+                if (justHandledReplacement) {
+                  // insertReplacementText 직후의 중복 insertText → 무시
+                  justHandledReplacement = false;
+                } else if (!sent) {
+                  // 첫 자모 (insertReplacementText 없이 온 경우)
+                  sent = data;
+                  onData(data);
+                } else {
+                  // insertText without prior insertReplacementText = 음절 확정(commit) 이벤트
+                  // PTY에 이미 해당 글자가 있으므로 재전송하지 않음, sent만 초기화
+                  sent = '';
+                }
+              }
+            });
+          }
+        }
+
         // ImageAddon (Sixel/iTerm2 이미지 프로토콜 지원)
         try {
           const imageAddon = new ImageAddon();
@@ -251,6 +316,13 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
 
         // ─── 키보드 핸들러 ───
         terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+          // 한글 IME 키(kc=229)를 xterm이 처리하지 못하도록 차단
+          // _handleAnyTextareaChanges → triggerDataEvent 경로를 막아 이중 전송 방지
+          // 실제 한글 처리는 아래 input 이벤트 리스너에서 담당
+          if (event.keyCode === 229 && event.type === 'keydown') {
+            return false;
+          }
+
           const isMeta = event.metaKey || event.ctrlKey;
 
           // Cmd+F / Ctrl+F → 검색 바 토글
@@ -299,7 +371,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
           return true;
         });
 
-        // ─── 사용자 입력 ───
+        // ─── 사용자 입력 (비-한글) ───
         if (onData) {
           terminal.onData((data) => {
             if (!disposedRef.current) onData(data);
