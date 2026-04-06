@@ -10,3 +10,8 @@ src-tauri/gen/
 playwright-report/
 test-results.json
 junit-results.xml
+
+# Ghostty vendor binaries (built from source, see docs/spike-phase1-ghosttykit.md)
+src-tauri/vendor/ghostty/lib/*.a
+src-tauri/vendor/ghostty/lib/*.metallib
+src-tauri/vendor/ghostty/lib/*.dylib

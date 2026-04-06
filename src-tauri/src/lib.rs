@@ -10,6 +10,9 @@ mod stores;
 mod file_watcher;
 mod usage_api;
 
+#[cfg(target_os = "macos")]
+pub mod ghostty;
+
 use commands::{load_command_history, load_projects, CommandHistoryEntry};
 use file_watcher::FileWatcherManager;
 use orchestrator::OrchestratorServer;
