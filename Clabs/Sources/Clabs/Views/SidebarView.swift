@@ -18,6 +18,7 @@ protocol SidebarDelegate: AnyObject {
     func sidebar(_ view: SidebarView, didSelectSkill skill: SkillInfo)
     func sidebar(_ view: SidebarView, didSelectCommand command: String)
     func sidebar(_ view: SidebarView, didRequestAction action: SidebarAction)
+    func sidebar(_ view: SidebarView, didRequestOpenFile path: String)
 }
 
 // MARK: - SidebarView
@@ -47,6 +48,13 @@ final class SidebarView: NSView {
     private var sectionViews: [SectionHeaderView] = []
     private var scrollView: NSScrollView!
     private var stackContainer: NSView!
+
+    // Tab mode
+    private enum SidebarTab { case skills, files }
+    private var activeTab: SidebarTab = .skills
+    private var segmentControl: NSSegmentedControl!
+    private var fileTreeView: FileTreeView?
+    private var currentProjectPath: String = FileManager.default.homeDirectoryForCurrentUser.path
 
     // Skill data (for click handling)
     private var scannedSkills: [SkillInfo] = []
@@ -136,6 +144,8 @@ final class SidebarView: NSView {
         sections = newSections
     }
 
+    private let segmentHeight: CGFloat = 32
+
     private func setupViews() {
         wantsLayer = true
         layer?.backgroundColor = bgColor.cgColor
@@ -148,8 +158,19 @@ final class SidebarView: NSView {
         border.frame = NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height)
         border.autoresizingMask = [.height, .minXMargin]
 
-        // Scroll view fills sidebar
-        scrollView = NSScrollView(frame: bounds)
+        // Segment control at top
+        segmentControl = NSSegmentedControl(labels: ["스킬", "파일"], trackingMode: .selectOne, target: self, action: #selector(segmentChanged))
+        segmentControl.selectedSegment = 0
+        segmentControl.segmentStyle = .capsule
+        segmentControl.font = .systemFont(ofSize: 12, weight: .medium)
+        segmentControl.frame = NSRect(x: 8, y: bounds.height - segmentHeight - 6, width: bounds.width - 16, height: segmentHeight)
+        segmentControl.autoresizingMask = [.width, .minYMargin]
+        addSubview(segmentControl)
+
+        // Scroll view below segment control
+        let scrollY: CGFloat = 0
+        let scrollH = bounds.height - segmentHeight - 12
+        scrollView = NSScrollView(frame: NSRect(x: 0, y: scrollY, width: bounds.width, height: scrollH))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.scrollerStyle = .overlay
@@ -158,6 +179,41 @@ final class SidebarView: NSView {
         addSubview(scrollView)
 
         rebuildStack()
+    }
+
+    @objc private func segmentChanged() {
+        activeTab = segmentControl.selectedSegment == 0 ? .skills : .files
+        updateTabContent()
+    }
+
+    private func updateTabContent() {
+        switch activeTab {
+        case .skills:
+            fileTreeView?.isHidden = true
+            scrollView.isHidden = false
+        case .files:
+            scrollView.isHidden = true
+            if fileTreeView == nil {
+                let ftv = FileTreeView(frame: scrollView.frame)
+                ftv.autoresizingMask = [.width, .height]
+                ftv.delegate = self
+                ftv.applyTheme(bg: bgColor, text: textPrimary, secondary: textSecondary)
+                addSubview(ftv)
+                fileTreeView = ftv
+            }
+            fileTreeView?.frame = scrollView.frame
+            fileTreeView?.isHidden = false
+            if let ftv = fileTreeView {
+                // Load if not yet loaded or path changed
+                ftv.load(rootPath: currentProjectPath)
+            }
+        }
+    }
+
+    /// Update file tree root when project path changes
+    func setProjectPath(_ path: String) {
+        currentProjectPath = path
+        fileTreeView?.load(rootPath: path)
     }
 
     // MARK: - Stack rebuild
@@ -320,6 +376,10 @@ final class SidebarView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         rebuildStack()
+        // Sync fileTreeView frame with scrollView
+        if let ftv = fileTreeView {
+            ftv.frame = scrollView.frame
+        }
     }
 }
 
@@ -501,4 +561,12 @@ private final class ItemRowButton: NSView {
 // MARK: - FlippedView (top-to-bottom layout for NSScrollView)
 private class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+// MARK: - FileTreeDelegate
+
+extension SidebarView: FileTreeDelegate {
+    func fileTree(_ view: FileTreeView, didRequestOpenFile path: String) {
+        delegate?.sidebar(self, didRequestOpenFile: path)
+    }
 }

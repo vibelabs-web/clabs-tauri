@@ -266,6 +266,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentSplitView = splitView
 
         mainWindow?.title = "Clabs — \(tab.title)"
+        sidebarView?.setProjectPath(tab.projectPath)
 
         // Force layout so new panes get valid frames → triggers tryCreateSurface
         contentArea.layoutSubtreeIfNeeded()
@@ -582,6 +583,11 @@ extension AppDelegate: SidebarDelegate {
             mainWindow?.toggleFullScreen(nil)
         }
         NSLog("[AppDelegate] sidebar action: %@", String(describing: action))
+    }
+
+    func sidebar(_ view: SidebarView, didRequestOpenFile path: String) {
+        // Phase 5C will open an editor tab; for now log the request
+        NSLog("[AppDelegate] open file requested: %@", path)
     }
 }
 
