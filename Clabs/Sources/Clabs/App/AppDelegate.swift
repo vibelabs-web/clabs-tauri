@@ -40,6 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Currently visible SplitPaneView
     private var currentSplitView: SplitPaneView?
 
+    // ContentArea manager (editor tabs + terminal switching)
+    private var contentAreaManager: ContentAreaManager?
+
     // CLI Builder panel
     private var cliBuilderPanel: NSPanel?
     private var cliBuilderView: CLIBuilderView?
@@ -160,13 +163,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentArea.autoresizingMask = [.width, .height]
         root.addSubview(contentArea)
 
-        // Cmd+B: toggle sidebar
+        // ContentAreaManager (editor tab bar lives here)
+        let cam = ContentAreaManager(contentArea: contentArea)
+        cam.delegate = self
+        contentAreaManager = cam
+
+        // Cmd+B: toggle sidebar; Cmd+S: save editor
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if event.modifierFlags.contains(.command),
-               event.charactersIgnoringModifiers == "b" {
-                self.toggleSidebar()
-                return nil
+            if event.modifierFlags.contains(.command) {
+                switch event.charactersIgnoringModifiers {
+                case "b":
+                    self.toggleSidebar()
+                    return nil
+                case "s":
+                    self.contentAreaManager?.saveCurrentEditor()
+                    return nil
+                default:
+                    break
+                }
             }
             return event
         }
@@ -262,8 +277,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         splitView.autoresizingMask = [.width, .height]
         splitView.delegate = self
         splitView.build() // must be called AFTER delegate is set
-        contentArea.addSubview(splitView)
         currentSplitView = splitView
+
+        // Hand the terminal view to ContentAreaManager (it adds it to contentArea)
+        contentAreaManager?.setTerminalView(splitView)
 
         mainWindow?.title = "Clabs — \(tab.title)"
         sidebarView?.setProjectPath(tab.projectPath)
@@ -586,8 +603,7 @@ extension AppDelegate: SidebarDelegate {
     }
 
     func sidebar(_ view: SidebarView, didRequestOpenFile path: String) {
-        // Phase 5C will open an editor tab; for now log the request
-        NSLog("[AppDelegate] open file requested: %@", path)
+        openFile(path: path)
     }
 }
 
@@ -676,5 +692,34 @@ extension AppDelegate: OrchestratorDelegate {
             }
         }
         return nil
+    }
+}
+
+// MARK: - File editor API
+
+extension AppDelegate {
+
+    /// Open a file in the editor tab. Called from SidebarDelegate and any external source.
+    func openFile(path: String) {
+        NSLog("[AppDelegate] openFile: %@", path)
+        contentAreaManager?.openFile(path: path)
+    }
+}
+
+// MARK: - ContentAreaManagerDelegate
+
+extension AppDelegate: ContentAreaManagerDelegate {
+
+    func contentAreaManager(_ manager: ContentAreaManager, didChangeActiveTab id: String) {
+        NSLog("[AppDelegate] contentArea active tab: %@", id)
+        // When terminal tab is active, give focus back to terminal
+        if id == "terminal" {
+            if let tab = tabs.first(where: { $0.id == activeTabId }),
+               let firstLeafId = tab.rootPane.allLeaves().first?.id,
+               let termView = termViews[firstLeafId] {
+                mainWindow?.makeFirstResponder(termView)
+                inputBoxView?.activePaneId = firstLeafId
+            }
+        }
     }
 }
