@@ -20,19 +20,20 @@ final class TabBarView: NSView {
     private var activeTabId: String = ""
 
     // Layout constants
-    private let barHeight: CGFloat = 38
+    private let barHeight: CGFloat = 36
     private let tabMinWidth: CGFloat = 100
     private let tabMaxWidth: CGFloat = 200
-    private let closeBtnSize: CGFloat = 24
-    private let addBtnWidth: CGFloat = 38
+    private let closeBtnSize: CGFloat = 16
+    private let addBtnWidth: CGFloat = 36
 
     // Colors (mutable for theme support)
-    private var bgColor: NSColor          = ThemePresets.defaultDark.ui.bgPrimary
-    private var activeTabColor: NSColor   = ThemePresets.defaultDark.ui.bgTertiary
-    private var inactiveTabColor: NSColor = ThemePresets.defaultDark.ui.bgSecondary
-    private var textColor: NSColor        = ThemePresets.defaultDark.ui.textPrimary
-    private var mutedTextColor: NSColor   = ThemePresets.defaultDark.ui.textSecondary
-    private var separatorColor: NSColor   = ThemePresets.defaultDark.ui.border
+    private var bgColor: NSColor          = ThemePresets.githubDark.ui.bgSecondary
+    private var activeTabColor: NSColor   = ThemePresets.githubDark.ui.bgSecondary
+    private var inactiveTabColor: NSColor = ThemePresets.githubDark.ui.bgSecondary
+    private var textColor: NSColor        = ThemePresets.githubDark.ui.textPrimary
+    private var mutedTextColor: NSColor   = ThemePresets.githubDark.ui.textSecondary
+    private var accentColor: NSColor      = ThemePresets.githubDark.ui.accent
+    private var separatorColor: NSColor   = ThemePresets.githubDark.ui.border
 
     // Subviews
     private var addButton: NSButton!
@@ -91,15 +92,17 @@ final class TabBarView: NSView {
     }
 
     private func makeAddButton() -> NSButton {
-        let btn = NSButton(frame: .zero)
+        let btn = HoverButton(frame: .zero)
         btn.bezelStyle = .inline
         btn.isBordered = false
         btn.title = "+"
-        btn.font = NSFont.systemFont(ofSize: 18, weight: .light)
+        btn.font = NSFont.systemFont(ofSize: 16, weight: .light)
         btn.contentTintColor = mutedTextColor
         btn.toolTip = "New Tab (⌘T)"
         btn.target = self
         btn.action = #selector(addButtonClicked)
+        btn.normalColor = .clear
+        btn.hoverColor = ThemePresets.githubDark.ui.bgTertiary
         return btn
     }
 
@@ -132,20 +135,24 @@ final class TabBarView: NSView {
             frame.width - addBtnWidth
         )
         tabStackView.frame = NSRect(x: 0, y: 0, width: totalWidth, height: barHeight)
+        // Remove spacing between tabs
+        tabStackView.spacing = 0
     }
 
     private func makeTabButton(id: String, title: String, isActive: Bool) -> NSView {
-        let container = NSView(frame: .zero)
+        let container = TabItemView(frame: .zero)
         container.translatesAutoresizingMaskIntoConstraints = false
         container.wantsLayer = true
-        container.layer?.backgroundColor = isActive ? activeTabColor.cgColor : inactiveTabColor.cgColor
+        container.layer?.backgroundColor = bgColor.cgColor
+        container.hoverBgColor = inactiveTabColor.withAlphaComponent(0.5)
 
-        // Bottom border for active tab
+        // Active tab: bottom accent border (2px)
         if isActive {
             let accent = CALayer()
-            accent.backgroundColor = NSColor.controlAccentColor.cgColor
-            accent.frame = CGRect(x: 0, y: 0, width: 0, height: 2) // width set in layout
+            accent.backgroundColor = accentColor.cgColor
+            accent.frame = CGRect(x: 0, y: 0, width: 0, height: 2)
             accent.autoresizingMask = [.layerWidthSizable]
+            accent.name = "accentBorder"
             container.layer?.addSublayer(accent)
         }
 
@@ -158,18 +165,20 @@ final class TabBarView: NSView {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         container.addSubview(label)
 
-        // Close button
+        // Close button (hidden by default, shown on hover)
         let closeBtn = NSButton(frame: .zero)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.bezelStyle = .inline
         closeBtn.isBordered = false
         closeBtn.title = "×"
-        closeBtn.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        closeBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         closeBtn.contentTintColor = mutedTextColor
+        closeBtn.alphaValue = 0  // hidden until hover
         closeBtn.target = self
         closeBtn.action = #selector(closeTabButtonClicked(_:))
         closeBtn.identifier = NSUserInterfaceItemIdentifier(id)
         container.addSubview(closeBtn)
+        container.closeButton = closeBtn
 
         // Click gesture on the whole container
         let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(tabContainerClicked(_:)))
@@ -177,11 +186,11 @@ final class TabBarView: NSView {
         container.identifier = NSUserInterfaceItemIdentifier(id)
 
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             label.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -4),
 
-            closeBtn.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
+            closeBtn.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             closeBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             closeBtn.widthAnchor.constraint(equalToConstant: closeBtnSize),
             closeBtn.heightAnchor.constraint(equalToConstant: closeBtnSize),
@@ -214,11 +223,12 @@ final class TabBarView: NSView {
     // MARK: - Theme
 
     func applyTheme(_ theme: Theme) {
-        bgColor          = theme.ui.bgPrimary
-        activeTabColor   = theme.ui.bgTertiary
+        bgColor          = theme.ui.bgSecondary
+        activeTabColor   = theme.ui.bgSecondary
         inactiveTabColor = theme.ui.bgSecondary
         textColor        = theme.ui.textPrimary
         mutedTextColor   = theme.ui.textSecondary
+        accentColor      = theme.ui.accent
         separatorColor   = theme.ui.border
         layer?.backgroundColor = bgColor.cgColor
         addButton?.contentTintColor = mutedTextColor
@@ -233,5 +243,68 @@ final class TabBarView: NSView {
         // Bottom separator line
         separatorColor.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    }
+}
+
+// MARK: - TabItemView (hover-aware tab container)
+
+final class TabItemView: NSView {
+
+    var closeButton: NSButton?
+    var hoverBgColor: NSColor = .clear
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.1
+            closeButton?.animator().alphaValue = 1
+            layer?.backgroundColor = hoverBgColor.cgColor
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            closeButton?.animator().alphaValue = 0
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+}
+
+// MARK: - HoverButton (hover background)
+
+final class HoverButton: NSButton {
+
+    var normalColor: NSColor = .clear
+    var hoverColor: NSColor = .clear
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        wantsLayer = true
+        layer?.backgroundColor = hoverColor.cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = normalColor.cgColor
     }
 }

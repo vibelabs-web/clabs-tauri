@@ -14,14 +14,16 @@ private enum DropdownMode {
 final class InputBox: NSView {
 
     // MARK: - Layout constants
-    static let defaultHeight: CGFloat = 50
+    static let defaultHeight: CGFloat = 48
 
     // MARK: - Colours (mutable for theme support)
-    private var bgColor: NSColor          = ThemePresets.defaultDark.ui.bgSecondary
-    private var borderColor: NSColor      = ThemePresets.defaultDark.ui.border
-    private var textColor: NSColor        = ThemePresets.defaultDark.ui.textPrimary
-    private var placeholderColor: NSColor = ThemePresets.defaultDark.ui.textSecondary
-    private var ghostColor: NSColor       = ThemePresets.defaultDark.ui.textSecondary.withAlphaComponent(0.7)
+    private var bgColor: NSColor          = ThemePresets.githubDark.ui.bgTertiary
+    private var fieldBgColor: NSColor     = ThemePresets.githubDark.ui.bgPrimary
+    private var borderColor: NSColor      = ThemePresets.githubDark.ui.border
+    private var textColor: NSColor        = ThemePresets.githubDark.ui.textPrimary
+    private var placeholderColor: NSColor = ThemePresets.githubDark.ui.textSecondary
+    private var accentColor: NSColor      = ThemePresets.githubDark.ui.accent
+    private var ghostColor: NSColor       = ThemePresets.githubDark.ui.textSecondary.withAlphaComponent(0.7)
 
     // MARK: - Subviews
     private(set) var textField: NSTextField!
@@ -82,18 +84,10 @@ final class InputBox: NSView {
         topBorder.autoresizingMask = [.width, .minYMargin]
         addSubview(topBorder)
 
-        // "claude" badge
-        let badge = NSTextField(labelWithString: "claude")
-        badge.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        badge.textColor = NSColor(srgbRed: 0.345, green: 0.651, blue: 1.0, alpha: 1)
-        badge.frame = NSRect(x: 12, y: (InputBox.defaultHeight - 18) / 2, width: 54, height: 18)
+        // "claude" badge — accent colored, pill shape
+        let badge = PillBadgeView(label: "claude", textColor: accentColor, bgColor: accentColor.withAlphaComponent(0.12))
+        badge.frame = NSRect(x: 10, y: (InputBox.defaultHeight - 20) / 2, width: 56, height: 20)
         addSubview(badge)
-
-        // Separator
-        let sep = NSView(frame: NSRect(x: 72, y: 10, width: 1, height: 30))
-        sep.wantsLayer = true
-        sep.layer?.backgroundColor = borderColor.cgColor
-        addSubview(sep)
 
         // Ghost text field (drawn before main field — appears behind typed text)
         ghostTextField = NSTextField(frame: .zero)
@@ -107,6 +101,15 @@ final class InputBox: NSView {
         ghostTextField.isEditable = false
         ghostTextField.isSelectable = false
         addSubview(ghostTextField)
+
+        // Text field container (rounded bg)
+        let fieldContainer = NSView(frame: .zero)
+        fieldContainer.wantsLayer = true
+        fieldContainer.layer?.backgroundColor = fieldBgColor.cgColor
+        fieldContainer.layer?.cornerRadius = 8
+        fieldContainer.layer?.borderWidth = 1
+        fieldContainer.layer?.borderColor = borderColor.withAlphaComponent(0.5).cgColor
+        addSubview(fieldContainer)
 
         // Main text field
         textField = NSTextField(frame: .zero)
@@ -132,14 +135,15 @@ final class InputBox: NSView {
         textField.delegate = self
         textField.target = self
         textField.action = #selector(submitCommand)
-        addSubview(textField)
+        fieldContainer.addSubview(textField)
+        fieldContainer.addSubview(ghostTextField)
 
-        // Settings button
-        let settingsBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+        // Send button — accent tint
+        let settingsBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
         settingsBtn.bezelStyle = .inline
         settingsBtn.isBordered = false
-        settingsBtn.image = NSImage(systemSymbolName: "paperplane.fill", accessibilityDescription: "Send")
-        settingsBtn.contentTintColor = placeholderColor
+        settingsBtn.image = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: "Send")
+        settingsBtn.contentTintColor = accentColor
         settingsBtn.target = self
         settingsBtn.action = #selector(openSettings)
         addSubview(settingsBtn)
@@ -150,22 +154,38 @@ final class InputBox: NSView {
     private func layoutSubviews() {
         let h = bounds.height
         let w = bounds.width
-        let fieldX: CGFloat = 80
-        let settingsBtnW: CGFloat = 40
-        let fieldW = max(w - fieldX - settingsBtnW - 8, 100)
-        let fieldY = (h - 22) / 2
+        let badgeW: CGFloat = 56
+        let badgeX: CGFloat = 10
+        let sendBtnW: CGFloat = 28
+        let padding: CGFloat = 8
+        let containerX = badgeX + badgeW + 6
+        let containerW = max(w - containerX - sendBtnW - padding * 2, 100)
+        let containerH: CGFloat = 32
+        let containerY = (h - containerH) / 2
 
         // Top border
         if let topBorder = subviews.first(where: { $0.frame.height == 1 }) {
             topBorder.frame = NSRect(x: 0, y: h - 1, width: w, height: 1)
         }
 
-        ghostTextField.frame = NSRect(x: fieldX, y: fieldY, width: fieldW, height: 22)
-        textField.frame      = NSRect(x: fieldX, y: fieldY, width: fieldW, height: 22)
+        // badge
+        if let badge = subviews.first(where: { $0 is PillBadgeView }) {
+            badge.frame = NSRect(x: badgeX, y: (h - 20) / 2, width: badgeW, height: 20)
+        }
 
-        // Settings button
+        // fieldContainer
+        if let container = subviews.first(where: { !($0 is NSButton) && !($0 is PillBadgeView) && $0.frame.height != 1 }) {
+            container.frame = NSRect(x: containerX, y: containerY, width: containerW, height: containerH)
+            let innerX: CGFloat = 8
+            let innerW = max(containerW - innerX - 4, 50)
+            let innerY = (containerH - 20) / 2
+            ghostTextField.frame = NSRect(x: innerX, y: innerY, width: innerW, height: 20)
+            textField.frame      = NSRect(x: innerX, y: innerY, width: innerW, height: 20)
+        }
+
+        // Send button
         if let btn = subviews.last(where: { $0 is NSButton }) {
-            btn.frame = NSRect(x: w - settingsBtnW - 4, y: (h - 32) / 2, width: 32, height: 32)
+            btn.frame = NSRect(x: w - sendBtnW - padding, y: (h - sendBtnW) / 2, width: sendBtnW, height: sendBtnW)
         }
     }
 
@@ -369,10 +389,12 @@ final class InputBox: NSView {
     // MARK: - Theme
 
     func applyTheme(_ theme: Theme) {
-        bgColor          = theme.ui.bgSecondary
+        bgColor          = theme.ui.bgTertiary
+        fieldBgColor     = theme.ui.bgPrimary
         borderColor      = theme.ui.border
         textColor        = theme.ui.textPrimary
         placeholderColor = theme.ui.textSecondary
+        accentColor      = theme.ui.accent
         ghostColor       = theme.ui.textSecondary.withAlphaComponent(0.7)
 
         layer?.backgroundColor = bgColor.cgColor
@@ -562,6 +584,32 @@ extension InputBox: AutocompleteDropdownDelegate {
 
     func dropdownDidClose(_ dropdown: AutocompleteDropdown) {
         closeDropdown()
+    }
+}
+
+// MARK: - PillBadgeView
+
+final class PillBadgeView: NSView {
+
+    private let labelField: NSTextField
+
+    init(label: String, textColor: NSColor, bgColor: NSColor) {
+        labelField = NSTextField(labelWithString: label)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.backgroundColor = bgColor.cgColor
+        labelField.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        labelField.textColor = textColor
+        labelField.alignment = .center
+        addSubview(labelField)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        labelField.frame = bounds.insetBy(dx: 4, dy: 2)
     }
 }
 

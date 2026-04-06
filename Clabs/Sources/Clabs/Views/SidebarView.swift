@@ -34,11 +34,12 @@ final class SidebarView: NSView {
 
     // MARK: - Colours (mutable for theme support)
 
-    private var bgColor: NSColor      = ThemePresets.defaultDark.ui.bgSecondary
-    private var borderColor: NSColor  = ThemePresets.defaultDark.ui.border
-    private var textPrimary: NSColor  = ThemePresets.defaultDark.ui.textPrimary
-    private var textSecondary: NSColor = ThemePresets.defaultDark.ui.textSecondary
-    private var accentColor: NSColor  = ThemePresets.defaultDark.ui.accent
+    private var bgColor: NSColor      = ThemePresets.githubDark.ui.bgSecondary
+    private var bgHoverColor: NSColor = ThemePresets.githubDark.ui.bgTertiary
+    private var borderColor: NSColor  = ThemePresets.githubDark.ui.border
+    private var textPrimary: NSColor  = ThemePresets.githubDark.ui.textPrimary
+    private var textSecondary: NSColor = ThemePresets.githubDark.ui.textSecondary
+    private var accentColor: NSColor  = ThemePresets.githubDark.ui.accent
 
     // MARK: - State
 
@@ -158,11 +159,11 @@ final class SidebarView: NSView {
         border.frame = NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height)
         border.autoresizingMask = [.height, .minXMargin]
 
-        // Segment control at top
-        segmentControl = NSSegmentedControl(labels: ["스킬", "파일"], trackingMode: .selectOne, target: self, action: #selector(segmentChanged))
+        // Segment control at top — rounded tab style
+        segmentControl = NSSegmentedControl(labels: ["Skills", "Files"], trackingMode: .selectOne, target: self, action: #selector(segmentChanged))
         segmentControl.selectedSegment = 0
-        segmentControl.segmentStyle = .capsule
-        segmentControl.font = .systemFont(ofSize: 12, weight: .medium)
+        segmentControl.segmentStyle = .rounded
+        segmentControl.font = .systemFont(ofSize: 11, weight: .medium)
         segmentControl.frame = NSRect(x: 8, y: bounds.height - segmentHeight - 6, width: bounds.width - 16, height: segmentHeight)
         segmentControl.autoresizingMask = [.width, .minYMargin]
         addSubview(segmentControl)
@@ -243,6 +244,7 @@ final class SidebarView: NSView {
                 textSecondary: textSecondary,
                 accentColor: accentColor,
                 bgColor: bgColor,
+                bgHoverColor: bgHoverColor,
                 borderColor: borderColor
             )
             header.autoresizingMask = [.width]
@@ -350,10 +352,10 @@ final class SidebarView: NSView {
         v.addSubview(sep)
 
         let skillCount = scannedSkills.count
-        let versionLabel = NSTextField(labelWithString: "v0.1.0-phase3a  |  \(skillCount) skills")
-        versionLabel.font = .systemFont(ofSize: 11)
-        versionLabel.textColor = textSecondary
-        versionLabel.frame = NSRect(x: 16, y: 10, width: 220, height: 16)
+        let versionLabel = NSTextField(labelWithString: "v0.1.0  ·  \(skillCount) skills")
+        versionLabel.font = .systemFont(ofSize: 10)
+        versionLabel.textColor = textSecondary.withAlphaComponent(0.5)
+        versionLabel.frame = NSRect(x: 16, y: 8, width: 220, height: 14)
         v.addSubview(versionLabel)
 
         return v
@@ -363,6 +365,7 @@ final class SidebarView: NSView {
 
     func applyTheme(_ theme: Theme) {
         bgColor       = theme.ui.bgSecondary
+        bgHoverColor  = theme.ui.bgTertiary
         borderColor   = theme.ui.border
         textPrimary   = theme.ui.textPrimary
         textSecondary = theme.ui.textSecondary
@@ -398,6 +401,7 @@ final class SectionHeaderView: NSView {
     private let textSecondary: NSColor
     private let accentColor: NSColor
     private let bgColor: NSColor
+    private let bgHoverColor: NSColor
     private let borderColor: NSColor
 
     init(
@@ -410,6 +414,7 @@ final class SectionHeaderView: NSView {
         textSecondary: NSColor,
         accentColor: NSColor,
         bgColor: NSColor,
+        bgHoverColor: NSColor,
         borderColor: NSColor
     ) {
         self.section = section
@@ -420,6 +425,7 @@ final class SectionHeaderView: NSView {
         self.textSecondary = textSecondary
         self.accentColor = accentColor
         self.bgColor = bgColor
+        self.bgHoverColor = bgHoverColor
         self.borderColor = borderColor
         super.init(frame: frame)
         build()
@@ -440,30 +446,38 @@ final class SectionHeaderView: NSView {
         headerRow.layer?.backgroundColor = bgColor.cgColor
         addSubview(headerRow)
 
-        // Bottom border under header
-        let sep = NSView(frame: NSRect(x: 0, y: headerY - 1, width: frame.width, height: 1))
+        // Subtle separator below header
+        let sep = NSView(frame: NSRect(x: 8, y: headerY - 1, width: frame.width - 16, height: 1))
         sep.wantsLayer = true
-        sep.layer?.backgroundColor = borderColor.withAlphaComponent(0.5).cgColor
+        sep.layer?.backgroundColor = borderColor.withAlphaComponent(0.3).cgColor
         addSubview(sep)
 
-        // Chevron
-        let chevron = NSButton(frame: NSRect(x: 8, y: (headerH - 20) / 2, width: 20, height: 20))
+        // Chevron (small, muted)
+        let chevron = NSButton(frame: NSRect(x: 8, y: (headerH - 16) / 2, width: 16, height: 16))
         chevron.bezelStyle = .inline
         chevron.isBordered = false
-        chevron.title = section.collapsed ? "▶" : "▼"
-        chevron.font = .systemFont(ofSize: 9)
-        chevron.contentTintColor = textSecondary
+        chevron.title = section.collapsed ? "›" : "⌄"
+        chevron.font = .systemFont(ofSize: 10, weight: .medium)
+        chevron.contentTintColor = textSecondary.withAlphaComponent(0.6)
         chevron.target = self
         chevron.action = #selector(headerTapped)
         headerRow.addSubview(chevron)
 
-        // Title + count
-        let countStr = " (\(section.items.count))"
-        let titleLabel = NSTextField(labelWithString: section.title.uppercased() + countStr)
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        titleLabel.textColor = textSecondary
-        titleLabel.frame = NSRect(x: 32, y: (headerH - 16) / 2, width: 200, height: 16)
+        // Title — small uppercase, muted
+        let shortTitle = sectionShortTitle(section.title)
+        let titleLabel = NSTextField(labelWithString: shortTitle.uppercased())
+        titleLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        titleLabel.textColor = textSecondary.withAlphaComponent(0.6)
+        titleLabel.frame = NSRect(x: 28, y: (headerH - 14) / 2, width: frame.width - 60, height: 14)
         headerRow.addSubview(titleLabel)
+
+        // Count badge (right-aligned)
+        let countLabel = NSTextField(labelWithString: "\(section.items.count)")
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        countLabel.textColor = textSecondary.withAlphaComponent(0.4)
+        countLabel.alignment = .right
+        countLabel.frame = NSRect(x: frame.width - 28, y: (headerH - 12) / 2, width: 20, height: 12)
+        headerRow.addSubview(countLabel)
 
         // Item rows (below header)
         for (i, item) in section.items.enumerated() {
@@ -474,31 +488,40 @@ final class SectionHeaderView: NSView {
         }
     }
 
+    private func sectionShortTitle(_ title: String) -> String {
+        // "스킬: category" → "category", else keep as-is
+        if title.hasPrefix("스킬: ") {
+            return String(title.dropFirst(4))
+        }
+        return title
+    }
+
     private func makeItemRow(text: String, y: CGFloat, width: CGFloat, itemIndex: Int) -> NSView {
         let btn = ItemRowButton(frame: NSRect(x: 0, y: y, width: width, height: itemH))
         btn.wantsLayer = true
         btn.layer?.backgroundColor = NSColor.clear.cgColor
         btn.sectionIndex = index
         btn.itemIndex = itemIndex
+        btn.hoverColor = bgHoverColor
         btn.onPress = { [weak self] sIdx, iIdx in
             self?.onItemClick?(sIdx, iIdx)
         }
 
         let label = NSTextField(labelWithString: text)
-        label.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+        label.font = .systemFont(ofSize: 12, weight: .regular)
         label.textColor = textPrimary
         label.lineBreakMode = .byTruncatingTail
-        label.frame = NSRect(x: 40, y: (itemH - 16) / 2, width: width - 56, height: 16)
+        label.frame = NSRect(x: 36, y: (itemH - 15) / 2, width: width - 52, height: 15)
         btn.addSubview(label)
 
         // Dot indicator — color based on section kind
-        let dot = NSView(frame: NSRect(x: 24, y: (itemH - 5) / 2, width: 5, height: 5))
+        let dot = NSView(frame: NSRect(x: 20, y: (itemH - 5) / 2, width: 5, height: 5))
         dot.wantsLayer = true
         let dotColor: NSColor
         switch section.kind {
         case .quickAction: dotColor = accentColor
         case .commandHistory: dotColor = NSColor(srgbRed: 0.545, green: 0.784, blue: 0.369, alpha: 1)
-        case .skills: dotColor = textSecondary.withAlphaComponent(0.7)
+        case .skills: dotColor = textSecondary.withAlphaComponent(0.5)
         }
         dot.layer?.backgroundColor = dotColor.cgColor
         dot.layer?.cornerRadius = 2.5
@@ -519,26 +542,31 @@ private final class ItemRowButton: NSView {
     var sectionIndex: Int = 0
     var itemIndex: Int = 0
     var onPress: ((Int, Int) -> Void)?
-
-    private let hoverColor = NSColor(srgbRed: 0.188, green: 0.212, blue: 0.239, alpha: 0.5)
+    var hoverColor: NSColor = NSColor(srgbRed: 0.129, green: 0.149, blue: 0.176, alpha: 1)
 
     override func mouseDown(with event: NSEvent) {
         wantsLayer = true
-        layer?.backgroundColor = hoverColor.cgColor
+        layer?.backgroundColor = hoverColor.withAlphaComponent(0.8).cgColor
     }
 
     override func mouseUp(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.backgroundColor = hoverColor.cgColor
         let loc = convert(event.locationInWindow, from: nil)
         NSLog("[ItemRowButton] mouseUp section=%d item=%d inBounds=%d onPress=%d", sectionIndex, itemIndex, bounds.contains(loc) ? 1 : 0, onPress != nil ? 1 : 0)
         if bounds.contains(loc) {
             onPress?(sectionIndex, itemIndex)
+            // brief flash then clear
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.layer?.backgroundColor = NSColor.clear.cgColor
+            }
+        } else {
+            layer?.backgroundColor = NSColor.clear.cgColor
         }
     }
 
     override func mouseEntered(with event: NSEvent) {
         wantsLayer = true
-        layer?.backgroundColor = hoverColor.withAlphaComponent(0.3).cgColor
+        layer?.backgroundColor = hoverColor.withAlphaComponent(0.4).cgColor
     }
 
     override func mouseExited(with event: NSEvent) {

@@ -7,13 +7,13 @@ final class StatusBar: NSView {
 
     // MARK: - Layout
 
-    static let defaultHeight: CGFloat = 25
+    static let defaultHeight: CGFloat = 22
 
     // MARK: - Colors
 
-    private var bgColor: NSColor     = NSColor(hex: "1a1b26")
-    private var textColor: NSColor   = NSColor(hex: "6272a4")
-    private var accentColor: NSColor = NSColor(hex: "8be9fd")
+    private var bgColor: NSColor     = ThemePresets.githubDark.ui.bgPrimary
+    private var textColor: NSColor   = ThemePresets.githubDark.ui.textSecondary
+    private var accentColor: NSColor = ThemePresets.githubDark.ui.accent
 
     // MARK: - Labels
 
@@ -50,11 +50,11 @@ final class StatusBar: NSView {
         // Top separator line (1px)
         separatorLine = NSView(frame: NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1))
         separatorLine.wantsLayer = true
-        separatorLine.layer?.backgroundColor = NSColor(hex: "2f3241").cgColor
+        separatorLine.layer?.backgroundColor = ThemePresets.githubDark.ui.border.cgColor
         separatorLine.autoresizingMask = [.width, .minYMargin]
         addSubview(separatorLine)
 
-        let fontSize: CGFloat = 11
+        let fontSize: CGFloat = 10
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
         // Left: context usage

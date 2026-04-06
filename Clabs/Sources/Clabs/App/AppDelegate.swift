@@ -14,7 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
 
     // Tab bar (top strip)
-    private let tabBarHeight: CGFloat = 38
+    private let tabBarHeight: CGFloat = 36
     private var tabBarView: TabBarView!
 
     // Sidebar
@@ -63,6 +63,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ghosttyManager.initializeApp()
 
+        // Terminal title change callback: update the tab title
+        ghosttyManager.onTitleChange = { [weak self] paneId, title in
+            guard let self else { return }
+            // Find the tab that owns this paneId and update its title
+            for i in self.tabs.indices {
+                if self.tabs[i].allLeafIds.contains(paneId) {
+                    self.tabs[i].title = title
+                    self.updateTabBar()
+                    if self.tabs[i].id == self.activeTabId {
+                        self.mainWindow?.title = "Clabs — \(title)"
+                    }
+                    break
+                }
+            }
+        }
+
         // Start orchestrator socket server
         let orch = OrchestratorServer()
         orch.delegate = self
@@ -92,23 +108,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildWindow() {
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         w.title = "Clabs"
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isMovableByWindowBackground = true
         w.center()
 
         let root = NSView(frame: w.contentView!.bounds)
         root.autoresizingMask = [.width, .height]
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor(white: 0.10, alpha: 1).cgColor
+        root.layer?.backgroundColor = ThemePresets.githubDark.ui.bgPrimary.cgColor
         w.contentView = root
 
-        // Tab bar (full width at top)
+        // Traffic light area: reserve ~28px at top for titlebar buttons in fullSizeContentView mode
+        let titlebarHeight: CGFloat = 28
+
+        // Tab bar sits immediately below traffic lights
         tabBarView = TabBarView(frame: NSRect(
             x: 0,
-            y: root.bounds.height - tabBarHeight,
+            y: root.bounds.height - titlebarHeight - tabBarHeight,
             width: root.bounds.width,
             height: tabBarHeight
         ))
@@ -116,7 +138,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tabBarView.delegate = self
         root.addSubview(tabBarView)
 
-        let bodyHeight = root.bounds.height - tabBarHeight
+        let bodyHeight = root.bounds.height - titlebarHeight - tabBarHeight
         let sbW = SidebarView.defaultWidth
         let ibH = InputBox.defaultHeight
         let sbH = StatusBar.defaultHeight
@@ -198,8 +220,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.inputBoxView?.applyTheme(theme)
             self.statusBarView?.applyTheme(theme)
         }
-        // Apply default theme immediately
-        ThemeManager.shared.apply(ThemePresets.defaultDark, ghosttyManager: ghosttyManager)
+        // Apply GitHub Dark theme as default to match Tauri app
+        ThemeManager.shared.apply(ThemePresets.githubDark, ghosttyManager: ghosttyManager)
 
         mainWindow = w
     }
@@ -212,7 +234,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let sbW: CGFloat = sidebarVisible ? SidebarView.defaultWidth : 0
         let ibH = InputBox.defaultHeight
         let sbH = StatusBar.defaultHeight
-        let bodyHeight = root.bounds.height - tabBarHeight
+        let titlebarHeight: CGFloat = 28
+        let bodyHeight = root.bounds.height - titlebarHeight - tabBarHeight
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.2
@@ -295,14 +318,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let size = tv.frame.size.width > 0 ? tv.frame.size : tv.bounds.size
                     NSLog("[AppDelegate] forcing surface for pane %@ frame=%.0fx%.0f bounds=%.0fx%.0f", leaf.id, tv.frame.size.width, tv.frame.size.height, tv.bounds.size.width, tv.bounds.size.height)
                     if size.width > 10 && size.height > 10 {
-                        _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv)
+                        _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv, workingDirectory: tv.workingDirectory)
                     } else {
                         // Frame still 0 — try again later
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                             guard let self, let tv = self.termViews[leaf.id], tv.surface == nil else { return }
                             NSLog("[AppDelegate] retry surface for pane %@ frame=%.0fx%.0f", leaf.id, tv.frame.width, tv.frame.height)
                             if tv.frame.width > 10 && tv.frame.height > 10 {
-                                _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv)
+                                _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv, workingDirectory: tv.workingDirectory)
                             }
                         }
                     }
@@ -325,6 +348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let tv = GhosttyNSView(frame: .zero)
         tv.manager = ghosttyManager
         tv.paneId = paneId
+        tv.workingDirectory = workingDirectory
         termViews[paneId] = tv
         NSLog("[AppDelegate] installed termView for pane \(paneId), wd=\(workingDirectory)")
     }
