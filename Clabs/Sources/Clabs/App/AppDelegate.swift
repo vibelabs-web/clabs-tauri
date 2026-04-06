@@ -7,6 +7,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     let ghosttyManager = GhosttyManager()
 
+    // Orchestrator
+    private var orchestrator: OrchestratorServer?
+
     // Main window
     private var mainWindow: NSWindow?
 
@@ -23,6 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // InputBox (bottom strip)
     private var inputBoxView: InputBox!
+
+    // StatusBar (bottom-most strip)
+    private var statusBarView: StatusBar!
 
     // Workspace state
     private var tabs: [WorkspaceTab] = []
@@ -54,18 +60,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ghosttyManager.initializeApp()
 
+        // Start orchestrator socket server
+        let orch = OrchestratorServer()
+        orch.delegate = self
+        orch.start()
+        orchestrator = orch
+
         DispatchQueue.main.async { [self] in
             buildWindow()
             let home = FileManager.default.homeDirectoryForCurrentUser.path
             openNewTab(projectPath: home)
             mainWindow?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-
-            // Auto-test removed — all features verified via logs
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        orchestrator?.stop()
         ghosttyManager.destroyAll()
     }
 
@@ -105,6 +116,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let bodyHeight = root.bounds.height - tabBarHeight
         let sbW = SidebarView.defaultWidth
         let ibH = InputBox.defaultHeight
+        let sbH = StatusBar.defaultHeight
 
         // Sidebar (left column, below tab bar)
         sidebarView = SidebarView(frame: NSRect(
@@ -117,10 +129,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         sidebarView.delegate = self
         root.addSubview(sidebarView)
 
-        // InputBox (bottom strip, right of sidebar)
-        inputBoxView = InputBox(frame: NSRect(
+        // StatusBar (bottom-most strip, right of sidebar)
+        statusBarView = StatusBar(frame: NSRect(
             x: sbW,
             y: 0,
+            width: root.bounds.width - sbW,
+            height: sbH
+        ))
+        statusBarView.autoresizingMask = [.width, .maxYMargin]
+        root.addSubview(statusBarView)
+
+        // InputBox (above status bar, right of sidebar)
+        inputBoxView = InputBox(frame: NSRect(
+            x: sbW,
+            y: sbH,
             width: root.bounds.width - sbW,
             height: ibH
         ))
@@ -131,9 +153,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Terminal content area (right of sidebar, above inputbox)
         contentArea = NSView(frame: NSRect(
             x: sbW,
-            y: ibH,
+            y: ibH + sbH,
             width: root.bounds.width - sbW,
-            height: bodyHeight - ibH
+            height: bodyHeight - ibH - sbH
         ))
         contentArea.autoresizingMask = [.width, .height]
         root.addSubview(contentArea)
@@ -159,6 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.sidebarView?.applyTheme(theme)
             self.tabBarView?.applyTheme(theme)
             self.inputBoxView?.applyTheme(theme)
+            self.statusBarView?.applyTheme(theme)
         }
         // Apply default theme immediately
         ThemeManager.shared.apply(ThemePresets.defaultDark, ghosttyManager: ghosttyManager)
@@ -173,6 +196,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let root = mainWindow?.contentView else { return }
         let sbW: CGFloat = sidebarVisible ? SidebarView.defaultWidth : 0
         let ibH = InputBox.defaultHeight
+        let sbH = StatusBar.defaultHeight
         let bodyHeight = root.bounds.height - tabBarHeight
 
         NSAnimationContext.runAnimationGroup { ctx in
@@ -180,8 +204,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             sidebarView.animator().frame = NSRect(x: 0, y: 0, width: sidebarVisible ? SidebarView.defaultWidth : 0, height: bodyHeight)
             sidebarView.isHidden = !sidebarVisible
-            inputBoxView.animator().frame = NSRect(x: sbW, y: 0, width: root.bounds.width - sbW, height: ibH)
-            contentArea.animator().frame = NSRect(x: sbW, y: ibH, width: root.bounds.width - sbW, height: bodyHeight - ibH)
+            statusBarView.animator().frame = NSRect(x: sbW, y: 0, width: root.bounds.width - sbW, height: sbH)
+            inputBoxView.animator().frame = NSRect(x: sbW, y: sbH, width: root.bounds.width - sbW, height: ibH)
+            contentArea.animator().frame = NSRect(x: sbW, y: ibH + sbH, width: root.bounds.width - sbW, height: bodyHeight - ibH - sbH)
         }
         NSLog("[AppDelegate] sidebar %@", sidebarVisible ? "shown" : "hidden")
     }
@@ -606,5 +631,44 @@ extension AppDelegate: CLIBuilderDelegate {
         cliBuilderPanel?.orderOut(nil)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSLog("[AppDelegate] CLIBuilder execute: %@", command)
+    }
+}
+
+// MARK: - OrchestratorDelegate
+
+extension AppDelegate: OrchestratorDelegate {
+
+    func orchestratorListPanes() -> [[String: String]] {
+        var result: [[String: String]] = []
+        for tab in tabs {
+            for leaf in tab.rootPane.allLeaves() {
+                result.append([
+                    "pane_id": leaf.id,
+                    "tab_id": tab.id,
+                    "tab_title": tab.title,
+                ])
+            }
+        }
+        return result
+    }
+
+    func orchestratorSendToPane(paneId: String, text: String) -> Bool {
+        guard let surface = ghosttyManager.surface(for: paneId) else { return false }
+        let fullText = text + "\r"
+        fullText.withCString { ptr in
+            ghostty_surface_text(surface, ptr, UInt(fullText.utf8.count))
+        }
+        return true
+    }
+
+    func orchestratorResolveName(_ name: String) -> String? {
+        // Simple name resolution: match tab title (case-insensitive) -> first pane
+        let lower = name.lowercased()
+        for tab in tabs {
+            if tab.title.lowercased().contains(lower) {
+                return tab.rootPane.allLeaves().first?.id
+            }
+        }
+        return nil
     }
 }
