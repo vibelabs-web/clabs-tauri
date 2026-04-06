@@ -1,12 +1,20 @@
 // PaneView - 리프 패인 래퍼 (PaneHeader + EditorTabBar + TerminalView/FilePreviewView)
 // absolute positioning으로 TerminalView 크기 확보
+//
+// Feature flag: localStorage.setItem('clabs.useNativeTerminal', 'true')
+// → NativeTerminalView (ghostty NSView 오버레이) 활성화
+// → localStorage.removeItem('clabs.useNativeTerminal') 으로 xterm 모드 복귀
 
 import { useCallback } from 'react';
 import type { PaneLeaf } from '@shared/pane-types';
 import { PaneHeader } from './PaneHeader';
 import { EditorTabBar } from './EditorTabBar';
 import { TerminalView } from './TerminalView';
+import { NativeTerminalView } from './NativeTerminalView';
 import { FilePreviewView } from './FilePreviewView';
+
+// 런타임에 한 번 평가 (리렌더마다 재평가 불필요)
+const USE_NATIVE_TERMINAL = localStorage.getItem('clabs.useNativeTerminal') === 'true';
 
 export interface PaneViewProps {
   pane: PaneLeaf;
@@ -104,19 +112,29 @@ export function PaneView({
 
       {/* 콘텐츠 영역 */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}>
-        {/* 터미널 (항상 렌더링, 비활성 시 숨김으로 PTY 연결 유지) */}
+        {/* 터미널 (항상 렌더링, 비활성 시 숨김으로 PTY 연결 유지)
+            ghostty 모드: NativeTerminalView가 자체 PTY를 생성 — pty.spawn 불필요.
+            xterm 모드:  TerminalView + window.api.pty.write 기존 방식 유지. */}
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
           display: isTerminalActive ? 'block' : 'none',
         }}>
-          <TerminalView
-            key={`${projectPath || 'default'}-${pane.id}`}
-            paneId={pane.id}
-            onData={handleTerminalData}
-            onReady={() => onPaneReady(pane.id)}
-            onSuggestion={onSuggestion}
-            onPtyOutput={onPtyOutput}
-          />
+          {USE_NATIVE_TERMINAL ? (
+            <NativeTerminalView
+              key={`native-${pane.id}`}
+              paneId={pane.id}
+              onReady={() => onPaneReady(pane.id)}
+            />
+          ) : (
+            <TerminalView
+              key={`${projectPath || 'default'}-${pane.id}`}
+              paneId={pane.id}
+              onData={handleTerminalData}
+              onReady={() => onPaneReady(pane.id)}
+              onSuggestion={onSuggestion}
+              onPtyOutput={onPtyOutput}
+            />
+          )}
         </div>
 
         {/* 파일 에디터 (파일 탭 활성 시) */}
