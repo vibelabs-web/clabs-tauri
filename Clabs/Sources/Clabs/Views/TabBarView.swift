@@ -26,13 +26,13 @@ final class TabBarView: NSView {
     private let closeBtnSize: CGFloat = 16
     private let addBtnWidth: CGFloat = 38
 
-    // Colors
-    private let bgColor = NSColor(white: 0.12, alpha: 1)
-    private let activeTabColor = NSColor(white: 0.20, alpha: 1)
-    private let inactiveTabColor = NSColor(white: 0.14, alpha: 1)
-    private let textColor = NSColor(white: 0.92, alpha: 1)
-    private let mutedTextColor = NSColor(white: 0.55, alpha: 1)
-    private let separatorColor = NSColor(white: 0.08, alpha: 1)
+    // Colors (mutable for theme support)
+    private var bgColor: NSColor          = ThemePresets.defaultDark.ui.bgPrimary
+    private var activeTabColor: NSColor   = ThemePresets.defaultDark.ui.bgTertiary
+    private var inactiveTabColor: NSColor = ThemePresets.defaultDark.ui.bgSecondary
+    private var textColor: NSColor        = ThemePresets.defaultDark.ui.textPrimary
+    private var mutedTextColor: NSColor   = ThemePresets.defaultDark.ui.textSecondary
+    private var separatorColor: NSColor   = ThemePresets.defaultDark.ui.border
 
     // Subviews
     private var addButton: NSButton!
@@ -209,6 +209,21 @@ final class TabBarView: NSView {
         let id = sender.identifier?.rawValue ?? ""
         guard !id.isEmpty else { return }
         delegate?.tabBar(self, didCloseTabId: id)
+    }
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: Theme) {
+        bgColor          = theme.ui.bgPrimary
+        activeTabColor   = theme.ui.bgTertiary
+        inactiveTabColor = theme.ui.bgSecondary
+        textColor        = theme.ui.textPrimary
+        mutedTextColor   = theme.ui.textSecondary
+        separatorColor   = theme.ui.border
+        layer?.backgroundColor = bgColor.cgColor
+        addButton?.contentTintColor = mutedTextColor
+        rebuildTabButtons()
+        needsDisplay = true
     }
 
     // MARK: - Drawing

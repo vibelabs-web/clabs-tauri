@@ -31,13 +31,13 @@ final class SidebarView: NSView {
     private let itemHeight: CGFloat = 32
     private let footerHeight: CGFloat = 36
 
-    // MARK: - Colours (dark theme)
+    // MARK: - Colours (mutable for theme support)
 
-    private let bgColor = NSColor(srgbRed: 0.086, green: 0.106, blue: 0.133, alpha: 1)
-    private let borderColor = NSColor(srgbRed: 0.188, green: 0.212, blue: 0.239, alpha: 1)
-    private let textPrimary = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
-    private let textSecondary = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 1)
-    private let accentColor = NSColor(srgbRed: 0.345, green: 0.651, blue: 1.0, alpha: 1)
+    private var bgColor: NSColor      = ThemePresets.defaultDark.ui.bgSecondary
+    private var borderColor: NSColor  = ThemePresets.defaultDark.ui.border
+    private var textPrimary: NSColor  = ThemePresets.defaultDark.ui.textPrimary
+    private var textSecondary: NSColor = ThemePresets.defaultDark.ui.textSecondary
+    private var accentColor: NSColor  = ThemePresets.defaultDark.ui.accent
 
     // MARK: - State
 
@@ -304,6 +304,18 @@ final class SidebarView: NSView {
         v.addSubview(versionLabel)
 
         return v
+    }
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: Theme) {
+        bgColor       = theme.ui.bgSecondary
+        borderColor   = theme.ui.border
+        textPrimary   = theme.ui.textPrimary
+        textSecondary = theme.ui.textSecondary
+        accentColor   = theme.ui.accent
+        layer?.backgroundColor = bgColor.cgColor
+        rebuildStack()
     }
 
     // MARK: - Layout

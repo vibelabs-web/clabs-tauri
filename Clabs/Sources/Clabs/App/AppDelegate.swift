@@ -146,6 +146,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu shortcuts
         setupMenu()
 
+        // Theme system: propagate changes to all views
+        setupThemeMenu()
+        ThemeManager.shared.onChange = { [weak self] theme in
+            guard let self else { return }
+            self.sidebarView?.applyTheme(theme)
+            self.tabBarView?.applyTheme(theme)
+            self.inputBoxView?.applyTheme(theme)
+        }
+        // Apply default theme immediately
+        ThemeManager.shared.apply(ThemePresets.defaultDark, ghosttyManager: ghosttyManager)
+
         mainWindow = w
     }
 
@@ -305,6 +316,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         nextTab.keyEquivalentModifierMask = [.command, .shift]
         nextTab.target = self
         tabMenu.addItem(nextTab)
+    }
+
+    // MARK: - Theme Menu
+
+    private func setupThemeMenu() {
+        let mainMenu = NSApp.mainMenu ?? NSMenu()
+
+        let themeItem = NSMenuItem()
+        mainMenu.addItem(themeItem)
+        let themeMenu = NSMenu(title: "Theme")
+        themeItem.submenu = themeMenu
+
+        for preset in ThemePresets.all {
+            let item = NSMenuItem(
+                title: preset.name,
+                action: #selector(menuSelectTheme(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = preset.id
+            themeMenu.addItem(item)
+        }
+    }
+
+    @objc private func menuSelectTheme(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let theme = ThemePresets.all.first(where: { $0.id == id }) else { return }
+        ThemeManager.shared.apply(theme, ghosttyManager: ghosttyManager)
+        NSLog("[AppDelegate] theme changed to: %@", theme.name)
     }
 
     @objc private func menuNewTab() {

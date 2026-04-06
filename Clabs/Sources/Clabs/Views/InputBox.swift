@@ -16,12 +16,12 @@ final class InputBox: NSView {
     // MARK: - Layout constants
     static let defaultHeight: CGFloat = 50
 
-    // MARK: - Colours
-    private let bgColor          = NSColor(srgbRed: 0.110, green: 0.133, blue: 0.157, alpha: 1)
-    private let borderColor      = NSColor(srgbRed: 0.188, green: 0.212, blue: 0.239, alpha: 1)
-    private let textColor        = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
-    private let placeholderColor = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 1)
-    private let ghostColor       = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 0.7)
+    // MARK: - Colours (mutable for theme support)
+    private var bgColor: NSColor          = ThemePresets.defaultDark.ui.bgSecondary
+    private var borderColor: NSColor      = ThemePresets.defaultDark.ui.border
+    private var textColor: NSColor        = ThemePresets.defaultDark.ui.textPrimary
+    private var placeholderColor: NSColor = ThemePresets.defaultDark.ui.textSecondary
+    private var ghostColor: NSColor       = ThemePresets.defaultDark.ui.textSecondary.withAlphaComponent(0.7)
 
     // MARK: - Subviews
     private var textField: NSTextField!
@@ -351,6 +351,30 @@ final class InputBox: NSView {
     }
 
     private static var tvKey: UInt8 = 0
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: Theme) {
+        bgColor          = theme.ui.bgSecondary
+        borderColor      = theme.ui.border
+        textColor        = theme.ui.textPrimary
+        placeholderColor = theme.ui.textSecondary
+        ghostColor       = theme.ui.textSecondary.withAlphaComponent(0.7)
+
+        layer?.backgroundColor = bgColor.cgColor
+        textField?.textColor   = textColor
+        ghostTextField?.textColor = ghostColor
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: placeholderColor,
+            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+        ]
+        textField?.placeholderAttributedString = NSAttributedString(
+            string: "claude --dangerously-skip-permissions",
+            attributes: attrs
+        )
+        needsDisplay = true
+    }
 
     // MARK: - Submit
 
