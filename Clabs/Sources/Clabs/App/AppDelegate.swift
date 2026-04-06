@@ -108,6 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             height: bodyHeight
         ))
         sidebarView.autoresizingMask = [.height]
+        sidebarView.delegate = self
         root.addSubview(sidebarView)
 
         // InputBox (bottom strip, right of sidebar)
@@ -371,6 +372,37 @@ extension AppDelegate: TabBarDelegate {
         presentFolderPicker { [weak self] path in
             self?.openNewTab(projectPath: path)
         }
+    }
+}
+
+// MARK: - SidebarDelegate
+
+extension AppDelegate: SidebarDelegate {
+
+    func sidebar(_ view: SidebarView, didSelectSkill skill: SkillInfo) {
+        // Insert /skillname into InputBox
+        inputBoxView?.insertText("/\(skill.name)")
+        NSLog("[AppDelegate] sidebar skill selected: %@", skill.name)
+    }
+
+    func sidebar(_ view: SidebarView, didSelectCommand command: String) {
+        // Send command directly to terminal
+        inputBoxView?.insertText(command)
+        NSLog("[AppDelegate] sidebar command selected: %@", command)
+    }
+
+    func sidebar(_ view: SidebarView, didRequestAction action: SidebarAction) {
+        switch action {
+        case .newTerminal:
+            menuNewTab()
+        case .splitHorizontal:
+            NSLog("[AppDelegate] sidebar action: split horizontal (not yet implemented)")
+        case .splitVertical:
+            NSLog("[AppDelegate] sidebar action: split vertical (not yet implemented)")
+        case .fullscreen:
+            mainWindow?.toggleFullScreen(nil)
+        }
+        NSLog("[AppDelegate] sidebar action: %@", String(describing: action))
     }
 }
 

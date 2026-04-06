@@ -125,8 +125,19 @@ final class InputBox: NSView {
 
     @objc private func submitCommand() {
         guard let text = textField.stringValue.nonEmpty else { return }
+        CommandHistory.shared.add(text)
         sendToTerminal(text + "\n")
         textField.stringValue = ""
+    }
+
+    /// Insert text into the input field (called from sidebar skill click)
+    func insertText(_ text: String) {
+        textField.stringValue = text
+        mainWindow?.makeFirstResponder(textField)
+    }
+
+    private var mainWindow: NSWindow? {
+        return window
     }
 
     @objc private func openSettings() {
