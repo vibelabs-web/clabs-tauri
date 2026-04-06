@@ -218,6 +218,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splitView = SplitPaneView(frame: contentArea.bounds, rootNode: tab.rootPane)
         splitView.autoresizingMask = [.width, .height]
         splitView.delegate = self
+        splitView.build() // must be called AFTER delegate is set
         contentArea.addSubview(splitView)
         currentSplitView = splitView
 

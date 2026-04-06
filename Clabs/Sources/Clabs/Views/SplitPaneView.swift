@@ -24,6 +24,12 @@ final class SplitPaneView: NSView {
         self.rootNode = rootNode
         super.init(frame: frame)
         wantsLayer = true
+        // NOTE: buildLayout is NOT called here — delegate is nil at init time.
+        // Call build() after setting delegate.
+    }
+
+    /// Must be called after setting delegate.
+    func build() {
         buildLayout(from: rootNode, into: self)
     }
 
@@ -71,7 +77,7 @@ final class SplitPaneView: NSView {
         self.rootNode = rootNode
         subviews.forEach { $0.removeFromSuperview() }
         splitViewControllers.removeAll()
-        buildLayout(from: rootNode, into: self)
+        buildLayout(from: rootNode, into: self) // OK here — delegate is already set
     }
 }
 
