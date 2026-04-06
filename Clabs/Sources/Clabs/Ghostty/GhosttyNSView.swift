@@ -103,6 +103,32 @@ class GhosttyNSView: NSView, NSTextInputClient {
     override func keyDown(with event: NSEvent) {
         guard let surface else { return }
 
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // Cmd+C: copy selection
+        if flags.contains(.command), event.charactersIgnoringModifiers == "c" {
+            if ghostty_surface_has_selection(surface) {
+                var textResult = ghostty_text_s()
+                if ghostty_surface_read_selection(surface, &textResult), let ptr = textResult.text {
+                    let str = String(cString: ptr)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(str, forType: .string)
+                    ghostty_surface_free_text(surface, &textResult)
+                }
+            }
+            return
+        }
+
+        // Cmd+V: paste
+        if flags.contains(.command), event.charactersIgnoringModifiers == "v" {
+            if let text = NSPasteboard.general.string(forType: .string) {
+                text.withCString { ptr in
+                    ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
+                }
+            }
+            return
+        }
+
         // Track whether insertText was called
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
