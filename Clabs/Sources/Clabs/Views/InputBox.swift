@@ -1,23 +1,45 @@
 import AppKit
 import CGhostty
 
-// @TASK Phase2B - Bottom command input bar
+// @TASK Phase3C - InputBox: autocomplete (slash/history/path) + ghost text + multiline modal
+
+// MARK: - DropdownMode
+
+private enum DropdownMode {
+    case none, slash, history, path
+}
+
+// MARK: - InputBox
+
 final class InputBox: NSView {
 
     // MARK: - Layout constants
     static let defaultHeight: CGFloat = 50
 
     // MARK: - Colours
-    private let bgColor    = NSColor(srgbRed: 0.110, green: 0.133, blue: 0.157, alpha: 1) // #1c2128
-    private let borderColor = NSColor(srgbRed: 0.188, green: 0.212, blue: 0.239, alpha: 1) // #30363d
-    private let textColor  = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1) // #e6edf3
-    private let placeholderColor = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 1) // #8b949e
-    private let labelBg    = NSColor(srgbRed: 0.137, green: 0.525, blue: 0.369, alpha: 1) // #238636-ish badge
+    private let bgColor          = NSColor(srgbRed: 0.110, green: 0.133, blue: 0.157, alpha: 1)
+    private let borderColor      = NSColor(srgbRed: 0.188, green: 0.212, blue: 0.239, alpha: 1)
+    private let textColor        = NSColor(srgbRed: 0.902, green: 0.929, blue: 0.953, alpha: 1)
+    private let placeholderColor = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 1)
+    private let ghostColor       = NSColor(srgbRed: 0.545, green: 0.584, blue: 0.616, alpha: 0.7)
 
     // MARK: - Subviews
     private var textField: NSTextField!
+    private var ghostTextField: NSTextField!
 
-    // MARK: - Dependencies (set by MainLayout)
+    // MARK: - Autocomplete
+    private var dropdown: AutocompleteDropdown?
+    private var dropdownMode: DropdownMode = .none
+
+    // MARK: - Skills cache
+    private var skillItems: [DropdownItem] = []
+
+    // MARK: - Ghost text
+    private var ghostText: String = "" {
+        didSet { ghostTextField?.stringValue = ghostText }
+    }
+
+    // MARK: - Dependencies
     weak var ghosttyManager: GhosttyManager?
     var activePaneId: String = "pane-main"
 
@@ -26,12 +48,16 @@ final class InputBox: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildUI()
+        loadSkills()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         buildUI()
+        loadSkills()
     }
+
+    // MARK: - Build UI
 
     private func buildUI() {
         wantsLayer = true
@@ -44,20 +70,33 @@ final class InputBox: NSView {
         topBorder.autoresizingMask = [.width, .minYMargin]
         addSubview(topBorder)
 
-        // "claude" badge label (left side)
+        // "claude" badge
         let badge = NSTextField(labelWithString: "claude")
         badge.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        badge.textColor = NSColor(srgbRed: 0.345, green: 0.651, blue: 1.0, alpha: 1) // #58a6ff
+        badge.textColor = NSColor(srgbRed: 0.345, green: 0.651, blue: 1.0, alpha: 1)
         badge.frame = NSRect(x: 12, y: (InputBox.defaultHeight - 18) / 2, width: 54, height: 18)
         addSubview(badge)
 
-        // Separator after badge
+        // Separator
         let sep = NSView(frame: NSRect(x: 72, y: 10, width: 1, height: 30))
         sep.wantsLayer = true
         sep.layer?.backgroundColor = borderColor.cgColor
         addSubview(sep)
 
-        // Text field
+        // Ghost text field (drawn before main field — appears behind typed text)
+        ghostTextField = NSTextField(frame: .zero)
+        ghostTextField.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        ghostTextField.textColor = ghostColor
+        ghostTextField.backgroundColor = .clear
+        ghostTextField.isBordered = false
+        ghostTextField.isBezeled = false
+        ghostTextField.focusRingType = .none
+        ghostTextField.drawsBackground = false
+        ghostTextField.isEditable = false
+        ghostTextField.isSelectable = false
+        addSubview(ghostTextField)
+
+        // Main text field
         textField = NSTextField(frame: .zero)
         textField.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textField.textColor = textColor
@@ -66,12 +105,10 @@ final class InputBox: NSView {
         textField.isBezeled = false
         textField.focusRingType = .none
         textField.drawsBackground = false
-        textField.placeholderString = "claude --dangerously-skip-permissions"
 
-        // Style placeholder
         let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: placeholderColor,
-            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+            .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
         ]
         textField.placeholderAttributedString = NSAttributedString(
             string: "claude --dangerously-skip-permissions",
@@ -83,7 +120,7 @@ final class InputBox: NSView {
         textField.action = #selector(submitCommand)
         addSubview(textField)
 
-        // Settings icon button (right side)
+        // Settings button
         let settingsBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
         settingsBtn.bezelStyle = .inline
         settingsBtn.isBordered = false
@@ -99,20 +136,22 @@ final class InputBox: NSView {
     private func layoutSubviews() {
         let h = bounds.height
         let w = bounds.width
-
         let fieldX: CGFloat = 80
-        let settingsBtnWidth: CGFloat = 40
-        let fieldWidth = w - fieldX - settingsBtnWidth - 8
-        textField.frame = NSRect(x: fieldX, y: (h - 22) / 2, width: max(fieldWidth, 100), height: 22)
+        let settingsBtnW: CGFloat = 40
+        let fieldW = max(w - fieldX - settingsBtnW - 8, 100)
+        let fieldY = (h - 22) / 2
 
-        // Settings button aligned right
-        if let settingsBtn = subviews.last(where: { ($0 as? NSButton) != nil }) {
-            settingsBtn.frame = NSRect(x: w - settingsBtnWidth - 4, y: (h - 32) / 2, width: 32, height: 32)
-        }
-
-        // Top border full width
+        // Top border
         if let topBorder = subviews.first(where: { $0.frame.height == 1 }) {
             topBorder.frame = NSRect(x: 0, y: h - 1, width: w, height: 1)
+        }
+
+        ghostTextField.frame = NSRect(x: fieldX, y: fieldY, width: fieldW, height: 22)
+        textField.frame      = NSRect(x: fieldX, y: fieldY, width: fieldW, height: 22)
+
+        // Settings button
+        if let btn = subviews.last(where: { $0 is NSButton }) {
+            btn.frame = NSRect(x: w - settingsBtnW - 4, y: (h - 32) / 2, width: 32, height: 32)
         }
     }
 
@@ -121,23 +160,215 @@ final class InputBox: NSView {
         layoutSubviews()
     }
 
-    // MARK: - Actions
+    // MARK: - Skills loading
+
+    private func loadSkills() {
+        let skills = SkillScanner.scan()
+        skillItems = skills.map { skill in
+            DropdownItem(
+                label: "/" + skill.name,
+                description: skill.description,
+                value: "/" + skill.name + " ",
+                icon: .slashSkill
+            )
+        }
+    }
+
+    // MARK: - Autocomplete: slash
+
+    private func handleSlashAutocomplete(query: String) {
+        let q = query.lowercased()
+
+        let builtins: [DropdownItem] = [
+            DropdownItem(label: "/help",    description: "도움말 표시",              value: "/help ",    icon: .slashBuiltin),
+            DropdownItem(label: "/clear",   description: "화면 지우기",              value: "/clear ",   icon: .slashBuiltin),
+            DropdownItem(label: "/exit",    description: "종료",                    value: "/exit ",    icon: .slashBuiltin),
+            DropdownItem(label: "/compact", description: "컨텍스트 요약 후 초기화", value: "/compact ", icon: .slashBuiltin),
+        ]
+
+        let all = skillItems + builtins
+        let filtered = q == "/" ? all : all.filter { $0.label.lowercased().hasPrefix(q) }
+
+        if filtered.isEmpty {
+            closeDropdown()
+        } else {
+            showDropdown(items: filtered, mode: .slash)
+        }
+    }
+
+    // MARK: - Autocomplete: history
+
+    private func handleHistoryDropdown() {
+        let entries = CommandHistory.shared.list(limit: 20)
+        guard !entries.isEmpty else { return }
+
+        let items = entries.map { entry in
+            DropdownItem(
+                label: entry.command,
+                description: formatTimeAgo(entry.timestamp),
+                value: entry.command,
+                icon: .history
+            )
+        }
+        showDropdown(items: items, mode: .history)
+    }
+
+    // MARK: - Autocomplete: file path (Tab)
+
+    private func handlePathCompletion() {
+        let text = textField.stringValue
+        let tokens = text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard let lastToken = tokens.last, !lastToken.isEmpty else { return }
+
+        let cmdPrefix = tokens.dropLast().joined(separator: " ")
+
+        let cwd = FileManager.default.currentDirectoryPath
+        let lastSlash = lastToken.lastIndex(of: "/")
+
+        let searchDir: String
+        let filePrefix: String
+        let tokenBase: String
+
+        if let slashIdx = lastSlash {
+            let afterSlash = lastToken.index(after: slashIdx)
+            let dirPart = String(lastToken[..<slashIdx])
+            filePrefix = String(lastToken[afterSlash...])
+            tokenBase = String(lastToken[...slashIdx])
+            searchDir = dirPart.hasPrefix("/") ? dirPart : (cwd + "/" + dirPart)
+        } else {
+            searchDir = cwd
+            filePrefix = lastToken
+            tokenBase = ""
+        }
+
+        guard !filePrefix.isEmpty else { return }
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: searchDir) else { return }
+
+        let matches = entries
+            .filter { $0.lowercased().hasPrefix(filePrefix.lowercased()) }
+            .sorted()
+        guard !matches.isEmpty else { return }
+
+        var isDir: ObjCBool = false
+        let items = matches.map { name -> DropdownItem in
+            let fullPath = searchDir + "/" + name
+            FileManager.default.fileExists(atPath: fullPath, isDirectory: &isDir)
+            let suffix = isDir.boolValue ? "/" : " "
+            let newValue = cmdPrefix.isEmpty
+                ? tokenBase + name + suffix
+                : cmdPrefix + " " + tokenBase + name + suffix
+            return DropdownItem(
+                label: name,
+                description: isDir.boolValue ? "폴더" : "파일",
+                value: newValue,
+                icon: isDir.boolValue ? .folder : .file
+            )
+        }
+
+        if items.count == 1 {
+            textField.stringValue = items[0].value
+            ghostText = ""
+        } else {
+            showDropdown(items: items, mode: .path)
+        }
+    }
+
+    // MARK: - Dropdown management
+
+    private func showDropdown(items: [DropdownItem], mode: DropdownMode) {
+        dropdownMode = mode
+
+        if dropdown == nil {
+            let dd = AutocompleteDropdown(frame: .zero)
+            dd.delegate = self
+            window?.contentView?.addSubview(dd)
+            dropdown = dd
+        }
+
+        dropdown?.reload(items: items)
+        repositionDropdown()
+        dropdown?.isHidden = false
+    }
+
+    private func repositionDropdown() {
+        guard let dd = dropdown, let windowView = window?.contentView else { return }
+
+        let inputOriginInWindow = convert(NSPoint(x: 0, y: bounds.maxY), to: windowView)
+        let ddW = AutocompleteDropdown.width
+        let ddH = dd.frame.height
+        let x = min(inputOriginInWindow.x + 80, windowView.bounds.width - ddW - 8)
+        let y = inputOriginInWindow.y + 4
+
+        dd.frame = NSRect(x: x, y: y, width: ddW, height: ddH)
+    }
+
+    func closeDropdown() {
+        dropdown?.isHidden = true
+        dropdownMode = .none
+        ghostText = ""
+    }
+
+    // MARK: - Multiline modal (Cmd+Enter)
+
+    private func openMultilineModal() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 320),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "확장 입력"
+        panel.isFloatingPanel = true
+        panel.center()
+
+        let tv = NSTextView(frame: .zero)
+        tv.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        tv.textColor = textColor
+        tv.backgroundColor = bgColor
+        tv.isRichText = false
+        tv.string = textField.stringValue
+
+        let sv = NSScrollView(frame: panel.contentView!.bounds)
+        sv.autoresizingMask = [.width, .height]
+        sv.documentView = tv
+        sv.hasVerticalScroller = true
+        panel.contentView?.addSubview(sv)
+
+        objc_setAssociatedObject(panel, &InputBox.tvKey, tv, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+
+        window?.beginSheet(panel) { [weak self, weak panel] _ in
+            guard
+                let self,
+                let panel,
+                let storedTV = objc_getAssociatedObject(panel, &InputBox.tvKey) as? NSTextView
+            else { return }
+            let text = storedTV.string
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.textField.stringValue = text
+                self.submitCommand()
+            }
+        }
+    }
+
+    private static var tvKey: UInt8 = 0
+
+    // MARK: - Submit
 
     @objc private func submitCommand() {
-        guard let text = textField.stringValue.nonEmpty else { return }
-        CommandHistory.shared.add(text)
-        sendToTerminal(text + "\n")
+        let raw = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+
+        CommandHistory.shared.add(raw)
+        sendToTerminal(raw + "\n")
         textField.stringValue = ""
+        ghostText = ""
+        closeDropdown()
     }
 
-    /// Insert text into the input field (called from sidebar skill click)
+    /// Insert text into the input field (called from sidebar skill click).
     func insertText(_ text: String) {
         textField.stringValue = text
-        mainWindow?.makeFirstResponder(textField)
-    }
-
-    private var mainWindow: NSWindow? {
-        return window
+        window?.makeFirstResponder(textField)
     }
 
     @objc private func openSettings() {
@@ -148,12 +379,10 @@ final class InputBox: NSView {
 
     private func sendToTerminal(_ text: String) {
         guard let manager = ghosttyManager else {
-            NSLog("[InputBox] no ghosttyManager")
-            return
+            NSLog("[InputBox] no ghosttyManager"); return
         }
         guard let surface = manager.surface(for: activePaneId) else {
-            NSLog("[InputBox] surface not found for pane: %@", activePaneId)
-            return
+            NSLog("[InputBox] surface not found for pane: %@", activePaneId); return
         }
         text.withCString { ptr in
             ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
@@ -165,12 +394,98 @@ final class InputBox: NSView {
 // MARK: - NSTextFieldDelegate
 
 extension InputBox: NSTextFieldDelegate {
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            submitCommand()
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+
+        // Cmd+Enter → multiline modal
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            openMultilineModal()
             return true
         }
+
+        // Enter
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if dropdownMode != .none {
+                dropdown?.confirmSelection()
+            } else {
+                submitCommand()
+            }
+            return true
+        }
+
+        // Tab
+        if commandSelector == #selector(NSResponder.insertTab(_:)) {
+            if dropdownMode != .none {
+                dropdown?.confirmSelection()
+            } else if !ghostText.isEmpty {
+                textField.stringValue = ghostText
+                ghostText = ""
+            } else {
+                handlePathCompletion()
+            }
+            return true
+        }
+
+        // Escape
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            if dropdownMode != .none {
+                closeDropdown()
+                return true
+            }
+            return false
+        }
+
+        // Arrow Up
+        if commandSelector == #selector(NSResponder.moveUp(_:)) {
+            if dropdownMode == .none {
+                handleHistoryDropdown()
+            } else {
+                dropdown?.moveSelection(by: -1)
+            }
+            return true
+        }
+
+        // Arrow Down
+        if commandSelector == #selector(NSResponder.moveDown(_:)) {
+            if dropdownMode != .none {
+                dropdown?.moveSelection(by: 1)
+                return true
+            }
+            return false
+        }
+
         return false
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        let text = textField.stringValue
+        ghostText = ""
+
+        if text.hasPrefix("/") {
+            handleSlashAutocomplete(query: text)
+        } else if dropdownMode == .slash || dropdownMode == .history || dropdownMode == .path {
+            closeDropdown()
+        }
+    }
+}
+
+// MARK: - AutocompleteDropdownDelegate
+
+extension InputBox: AutocompleteDropdownDelegate {
+
+    func dropdown(_ dropdown: AutocompleteDropdown, didSelect item: DropdownItem) {
+        textField.stringValue = item.value
+        closeDropdown()
+        window?.makeFirstResponder(textField)
+    }
+
+    func dropdownDidClose(_ dropdown: AutocompleteDropdown) {
+        closeDropdown()
     }
 }
 
@@ -178,4 +493,16 @@ extension InputBox: NSTextFieldDelegate {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - Time formatting
+
+private func formatTimeAgo(_ date: Date) -> String {
+    let diff = Date().timeIntervalSince(date)
+    switch diff {
+    case ..<60:    return "방금"
+    case ..<3600:  return "\(Int(diff / 60))분 전"
+    case ..<86400: return "\(Int(diff / 3600))시간 전"
+    default:       return "\(Int(diff / 86400))일 전"
+    }
 }
