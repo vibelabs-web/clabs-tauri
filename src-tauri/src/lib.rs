@@ -43,6 +43,9 @@ pub struct AppState {
     pub slack_bridge: Mutex<Option<slack_bridge::SlackBridge>>,
     /// Pane name registry: name → pane_id (for resolve by name)
     pub pane_names: Mutex<HashMap<String, String>>,
+    /// Ghostty native terminal manager (macOS only)
+    #[cfg(target_os = "macos")]
+    pub ghostty_manager: ghostty::GhosttyManager,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -114,6 +117,8 @@ pub fn run() {
                 split_waiters: Mutex::new(HashMap::new()),
                 slack_bridge: Mutex::new(slack_bridge),
                 pane_names: Mutex::new(HashMap::new()),
+                #[cfg(target_os = "macos")]
+                ghostty_manager: ghostty::GhosttyManager::new(),
             };
 
             app.manage(state);
@@ -214,6 +219,31 @@ pub fn run() {
             // Session Persistence
             commands::session_save,
             commands::session_load,
+            // Ghostty Native Terminal (macOS)
+            #[cfg(target_os = "macos")]
+            commands::ghostty_create,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_destroy,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_set_frame,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_set_visible,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_focus,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_apply_theme,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_search,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_search_clear,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_get_selection,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_get_buffer_text,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_copy,
+            #[cfg(target_os = "macos")]
+            commands::ghostty_paste,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -224,6 +254,8 @@ pub fn run() {
                     state.session_watcher.stop();
                     state.file_watcher.stop();
                     state.pty_pool.kill_all();
+                    #[cfg(target_os = "macos")]
+                    state.ghostty_manager.destroy_all();
                 }
             }
         })

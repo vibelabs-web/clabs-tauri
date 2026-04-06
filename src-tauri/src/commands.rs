@@ -1077,3 +1077,178 @@ pub fn load_command_history() -> Vec<CommandHistoryEntry> {
         Vec::new()
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Ghostty Native Terminal Commands
+// @TASK P2-COMMANDS - Tauri commands for ghostty terminal management
+// @SPEC docs/spike-phase2-ghostty-manager.md
+// ─────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+mod ghostty_commands {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Helper: get NSWindow pointer from tauri::Window.
+    ///
+    /// On macOS, tauri::Window provides ns_window() via the raw window handle.
+    /// We use objc2 to get the NSWindow pointer safely.
+    fn get_ns_window(window: &tauri::Window) -> Result<*mut std::ffi::c_void, String> {
+        use objc2::msg_send;
+        use objc2_app_kit::NSView;
+
+        // Tauri v2: Window has a method to get the raw window handle via HasWindowHandle
+        // We need to use raw_window_handle to get the NSView, then find its NSWindow
+        use raw_window_handle::HasWindowHandle;
+        let handle = window
+            .window_handle()
+            .map_err(|e| format!("failed to get window handle: {}", e))?;
+        let raw = handle.as_raw();
+
+        match raw {
+            raw_window_handle::RawWindowHandle::AppKit(appkit) => {
+                // appkit.ns_view is a NonNull<c_void> pointing to the NSView
+                let ns_view_ptr = appkit.ns_view.as_ptr() as *mut NSView;
+                unsafe {
+                    // Get the NSWindow from the NSView
+                    let ns_window: *mut std::ffi::c_void =
+                        msg_send![&*ns_view_ptr, window];
+                    if ns_window.is_null() {
+                        return Err("NSView has no window".to_string());
+                    }
+                    Ok(ns_window)
+                }
+            }
+            _ => Err("not an AppKit window handle".to_string()),
+        }
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_create(
+        window: tauri::Window,
+        state: State<'_, AppState>,
+        pane_id: String,
+        config: Option<HashMap<String, String>>,
+    ) -> Result<(), String> {
+        let ns_window = get_ns_window(&window)?;
+        state.ghostty_manager.create(&pane_id, ns_window, config)
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_destroy(
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<(), String> {
+        state.ghostty_manager.destroy(&pane_id);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_set_frame(
+        state: State<'_, AppState>,
+        pane_id: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> Result<(), String> {
+        state.ghostty_manager.set_frame(&pane_id, x, y, width, height);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_set_visible(
+        state: State<'_, AppState>,
+        pane_id: String,
+        visible: bool,
+    ) -> Result<(), String> {
+        state.ghostty_manager.set_visible(&pane_id, visible);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_focus(
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<(), String> {
+        state.ghostty_manager.focus(&pane_id);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_apply_theme(
+        state: State<'_, AppState>,
+        pane_id: String,
+        theme: HashMap<String, String>,
+    ) -> Result<(), String> {
+        state.ghostty_manager.apply_theme(&pane_id, theme);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_search(
+        state: State<'_, AppState>,
+        pane_id: String,
+        query: String,
+        direction: Option<String>,
+    ) -> Result<(), String> {
+        let dir = direction.as_deref().unwrap_or("next");
+        state.ghostty_manager.search(&pane_id, &query, dir);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_search_clear(
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<(), String> {
+        state.ghostty_manager.search_clear(&pane_id);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_get_selection(
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<String, String> {
+        state
+            .ghostty_manager
+            .get_selection(&pane_id)
+            .ok_or_else(|| "no selection".to_string())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_get_buffer_text(
+        state: State<'_, AppState>,
+        pane_id: String,
+        max_lines: Option<usize>,
+    ) -> Result<Vec<String>, String> {
+        let lines = max_lines.unwrap_or(1000);
+        Ok(state.ghostty_manager.get_buffer_text(&pane_id, lines))
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_copy(
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<String, String> {
+        state
+            .ghostty_manager
+            .copy(&pane_id)
+            .ok_or_else(|| "no selection to copy".to_string())
+    }
+
+    #[tauri::command]
+    pub async fn ghostty_paste(
+        state: State<'_, AppState>,
+        pane_id: String,
+        text: String,
+    ) -> Result<(), String> {
+        state.ghostty_manager.paste(&pane_id, &text);
+        Ok(())
+    }
+}
+
+// Re-export ghostty commands on macOS
+#[cfg(target_os = "macos")]
+pub use ghostty_commands::*;
