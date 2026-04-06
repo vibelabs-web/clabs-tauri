@@ -11,6 +11,9 @@ class GhosttyManager: ObservableObject {
     private var tickScheduled = false
     private let tickLock = NSLock()
 
+    /// Callback: (paneId, newTitle) — called on main thread when terminal sets its title.
+    var onTitleChange: ((String, String) -> Void)?
+
     struct SurfaceInstance {
         let surface: ghostty_surface_t
         let view: GhosttyNSView
@@ -49,8 +52,43 @@ class GhosttyManager: ObservableObject {
             let mgr = Unmanaged<GhosttyManager>.fromOpaque(userdata).takeUnretainedValue()
             mgr.scheduleTick()
         }
-        runtime.action_cb = { _, _, _ in
-            return false // default handling
+        runtime.action_cb = { userdata, target, action in
+            guard let userdata else { return false }
+            let mgr = Unmanaged<GhosttyManager>.fromOpaque(userdata).takeUnretainedValue()
+            switch action.tag {
+            case GHOSTTY_ACTION_SET_TITLE, GHOSTTY_ACTION_SET_TAB_TITLE:
+                let titlePtr = action.action.set_title.title
+                guard let titlePtr else { return false }
+                let title = String(cString: titlePtr)
+                // Extract surface pointer from target (only if tag is SURFACE)
+                guard target.tag == GHOSTTY_TARGET_SURFACE else { return true }
+                let targetSurface = target.target.surface
+                DispatchQueue.main.async {
+                    for (paneId, instance) in mgr.surfaces {
+                        if targetSurface == instance.surface {
+                            mgr.onTitleChange?(paneId, title)
+                            break
+                        }
+                    }
+                }
+                return true
+            case GHOSTTY_ACTION_OPEN_URL:
+                let urlPtr = action.action.open_url.url
+                let urlLen = action.action.open_url.len
+                guard let urlPtr, urlLen > 0 else { return false }
+                // urlPtr is const char* (Int8); reinterpret as UInt8 for String(bytes:)
+                let urlStr = urlPtr.withMemoryRebound(to: UInt8.self, capacity: Int(urlLen)) { p in
+                    String(bytes: UnsafeBufferPointer(start: p, count: Int(urlLen)), encoding: .utf8)
+                } ?? String(cString: urlPtr)
+                if let url = URL(string: urlStr) {
+                    DispatchQueue.main.async {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                return true
+            default:
+                return false
+            }
         }
         runtime.read_clipboard_cb = { _, _, _ in
             return false
@@ -109,7 +147,7 @@ class GhosttyManager: ObservableObject {
 
     // MARK: - Surface Lifecycle
 
-    func createSurface(paneId: String, in view: GhosttyNSView) -> Bool {
+    func createSurface(paneId: String, in view: GhosttyNSView, workingDirectory: String? = nil) -> Bool {
         guard let app else {
             NSLog("[GhosttyManager] no app — cannot create surface")
             return false
@@ -133,10 +171,10 @@ class GhosttyManager: ObservableObject {
         surfaceConfig.font_size = 14 // explicit font size
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
-        // Working directory
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let cHome = (home as NSString).utf8String
-        surfaceConfig.working_directory = cHome
+        // Working directory: use provided path, fall back to $HOME
+        let wd = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let cwdString = (wd as NSString).utf8String
+        surfaceConfig.working_directory = cwdString
 
         guard let surface = ghostty_surface_new(app, &surfaceConfig) else {
             NSLog("[GhosttyManager] ghostty_surface_new FAILED for \(paneId)")

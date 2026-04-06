@@ -14,6 +14,13 @@ class GhosttyNSView: NSView, NSTextInputClient {
     weak var manager: GhosttyManager?
     var paneId: String = ""
 
+    /// Working directory to pass when creating the surface.
+    var workingDirectory: String?
+
+    /// Current font size (relative to base 14pt).
+    private var fontSizeDelta: Int = 0
+    private let baseFontSize: Float = 14.0
+
     /// Marked text for IME composition (Korean, Japanese, etc.)
     private var markedTextStorage = NSMutableAttributedString()
     /// Text accumulated from interpretKeyEvents → insertText
@@ -64,7 +71,7 @@ class GhosttyNSView: NSView, NSTextInputClient {
         guard window != nil else { return }
 
         NSLog("[GhosttyNSView] creating surface: frame=%.0fx%.0f pane=%@", frame.width, frame.height, paneId)
-        surfaceCreated = manager.createSurface(paneId: paneId, in: self)
+        surfaceCreated = manager.createSurface(paneId: paneId, in: self, workingDirectory: workingDirectory)
         if surfaceCreated {
             // Delayed focus — window may not be key yet during initial layout
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -104,6 +111,24 @@ class GhosttyNSView: NSView, NSTextInputClient {
         guard let surface else { return }
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // Cmd+= or Cmd++ : increase font size
+        if flags.contains(.command), event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+" {
+            adjustFontSize(delta: 1)
+            return
+        }
+
+        // Cmd+- : decrease font size
+        if flags.contains(.command), event.charactersIgnoringModifiers == "-" {
+            adjustFontSize(delta: -1)
+            return
+        }
+
+        // Cmd+0 : reset font size
+        if flags.contains(.command), event.charactersIgnoringModifiers == "0" {
+            resetFontSize()
+            return
+        }
 
         // Cmd+C: copy selection
         if flags.contains(.command), event.charactersIgnoringModifiers == "c" {
@@ -339,4 +364,113 @@ class GhosttyNSView: NSView, NSTextInputClient {
         if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
         return ghostty_input_mods_e(rawValue: mods)
     }
+
+    // MARK: - Font Size
+
+    private func adjustFontSize(delta: Int) {
+        guard let manager else { return }
+        fontSizeDelta = max(-8, min(20, fontSizeDelta + delta))
+        applyFontSize(manager: manager)
+    }
+
+    private func resetFontSize() {
+        guard let manager else { return }
+        fontSizeDelta = 0
+        applyFontSize(manager: manager)
+    }
+
+    private func applyFontSize(manager: GhosttyManager) {
+        guard manager.config != nil else { return }
+        let newSize = baseFontSize + Float(fontSizeDelta)
+        guard let newConfig = ghostty_config_new() else { return }
+        ghostty_config_load_default_files(newConfig)
+
+        // Write font-size to a temporary config file and load it
+        let tmpPath = NSTemporaryDirectory() + "clabs_fontsize_\(paneId).conf"
+        let content = "font-size = \(Int(newSize))\n"
+        try? content.write(toFile: tmpPath, atomically: true, encoding: .utf8)
+        tmpPath.withCString { path in
+            ghostty_config_load_file(newConfig, path)
+        }
+        ghostty_config_finalize(newConfig)
+        if let surface {
+            ghostty_surface_update_config(surface, newConfig)
+        }
+        ghostty_config_free(newConfig)
+        try? FileManager.default.removeItem(atPath: tmpPath)
+        NSLog("[GhosttyNSView] font size: %.0f", newSize)
+    }
+
+    // MARK: - Context Menu (right-click)
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu(title: "Terminal")
+
+        let copyItem = NSMenuItem(title: "복사", action: #selector(menuCopy), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(title: "붙여넣기", action: #selector(menuPaste), keyEquivalent: "")
+        pasteItem.target = self
+        menu.addItem(pasteItem)
+
+        menu.addItem(.separator())
+
+        let selectAllItem = NSMenuItem(title: "전체 선택", action: #selector(menuSelectAll), keyEquivalent: "")
+        selectAllItem.target = self
+        menu.addItem(selectAllItem)
+
+        menu.addItem(.separator())
+
+        let fontBigger = NSMenuItem(title: "글자 크게 (Cmd+=)", action: #selector(menuFontIncrease), keyEquivalent: "")
+        fontBigger.target = self
+        menu.addItem(fontBigger)
+
+        let fontSmaller = NSMenuItem(title: "글자 작게 (Cmd+-)", action: #selector(menuFontDecrease), keyEquivalent: "")
+        fontSmaller.target = self
+        menu.addItem(fontSmaller)
+
+        let fontReset = NSMenuItem(title: "기본 크기로 (Cmd+0)", action: #selector(menuFontReset), keyEquivalent: "")
+        fontReset.target = self
+        menu.addItem(fontReset)
+
+        return menu
+    }
+
+    @objc private func menuCopy() {
+        guard let surface else { return }
+        if ghostty_surface_has_selection(surface) {
+            var textResult = ghostty_text_s()
+            if ghostty_surface_read_selection(surface, &textResult), let ptr = textResult.text {
+                let str = String(cString: ptr)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(str, forType: .string)
+                ghostty_surface_free_text(surface, &textResult)
+            }
+        }
+    }
+
+    @objc private func menuPaste() {
+        guard let surface, let text = NSPasteboard.general.string(forType: .string) else { return }
+        text.withCString { ptr in
+            ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
+        }
+    }
+
+    @objc private func menuSelectAll() {
+        // Send Ctrl+A as a terminal select-all convention, or use ghostty binding
+        // ghostty does not have a direct select-all API; send the key sequence
+        guard let surface else { return }
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        keyEvent.keycode = 0 // 'a'
+        keyEvent.mods = ghostty_input_mods_e(rawValue: GHOSTTY_MODS_CTRL.rawValue)
+        keyEvent.composing = false
+        keyEvent.text = nil
+        _ = ghostty_surface_key(surface, keyEvent)
+    }
+
+    @objc private func menuFontIncrease() { adjustFontSize(delta: 1) }
+    @objc private func menuFontDecrease() { adjustFontSize(delta: -1) }
+    @objc private func menuFontReset() { resetFontSize() }
 }
