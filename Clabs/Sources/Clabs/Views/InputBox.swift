@@ -138,7 +138,7 @@ final class InputBox: NSView {
         let settingsBtn = NSButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
         settingsBtn.bezelStyle = .inline
         settingsBtn.isBordered = false
-        settingsBtn.image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
+        settingsBtn.image = NSImage(systemSymbolName: "paperplane.fill", accessibilityDescription: "Send")
         settingsBtn.contentTintColor = placeholderColor
         settingsBtn.target = self
         settingsBtn.action = #selector(openSettings)
@@ -396,11 +396,14 @@ final class InputBox: NSView {
     func triggerSubmit() { submitCommand() }
 
     @objc private func submitCommand() {
-        let raw = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return }
+        var raw = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty {
+            raw = "claude --dangerously-skip-permissions"
+        }
 
         CommandHistory.shared.add(raw)
-        sendToTerminal(raw + "\n")
+        sendToTerminal(raw)
+        sendEnterKey()
         textField.stringValue = ""
         ghostText = ""
         closeDropdown()
@@ -413,7 +416,7 @@ final class InputBox: NSView {
     }
 
     @objc private func openSettings() {
-        NSLog("[InputBox] settings tapped (not implemented)")
+        submitCommand()
     }
 
     // MARK: - Terminal send
@@ -438,6 +441,29 @@ final class InputBox: NSView {
             ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
         }
         NSLog("[InputBox] sent: %@", text)
+    }
+
+    private func sendEnterKey() {
+        guard let manager = ghosttyManager else { return }
+        let surface = manager.surface(for: activePaneId) ?? manager.firstSurface()
+        guard let surface else { return }
+
+        // Send Enter as a key event (keycode 36 = Return on macOS)
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        keyEvent.keycode = 36 // Return key
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.text = nil
+        keyEvent.composing = false
+        "\r".withCString { ptr in
+            keyEvent.text = ptr
+            _ = ghostty_surface_key(surface, keyEvent)
+        }
+
+        // Release
+        keyEvent.action = GHOSTTY_ACTION_RELEASE
+        keyEvent.text = nil
+        _ = ghostty_surface_key(surface, keyEvent)
     }
 }
 
