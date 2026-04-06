@@ -14,8 +14,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let tabBarHeight: CGFloat = 38
     private var tabBarView: TabBarView!
 
+    // Sidebar
+    private var sidebarView: SidebarView!
+    private var sidebarVisible: Bool = true
+
     // Terminal content area
     private var contentArea: NSView!
+
+    // InputBox (bottom strip)
+    private var inputBoxView: InputBox!
 
     // Workspace state
     private var tabs: [WorkspaceTab] = []
@@ -78,7 +85,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         root.layer?.backgroundColor = NSColor(white: 0.10, alpha: 1).cgColor
         w.contentView = root
 
-        // Tab bar
+        // Tab bar (full width at top)
         tabBarView = TabBarView(frame: NSRect(
             x: 0,
             y: root.bounds.height - tabBarHeight,
@@ -89,20 +96,76 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tabBarView.delegate = self
         root.addSubview(tabBarView)
 
-        // Terminal content area (below tab bar)
-        contentArea = NSView(frame: NSRect(
+        let bodyHeight = root.bounds.height - tabBarHeight
+        let sbW = SidebarView.defaultWidth
+        let ibH = InputBox.defaultHeight
+
+        // Sidebar (left column, below tab bar)
+        sidebarView = SidebarView(frame: NSRect(
             x: 0,
             y: 0,
-            width: root.bounds.width,
-            height: root.bounds.height - tabBarHeight
+            width: sbW,
+            height: bodyHeight
+        ))
+        sidebarView.autoresizingMask = [.height]
+        root.addSubview(sidebarView)
+
+        // InputBox (bottom strip, right of sidebar)
+        inputBoxView = InputBox(frame: NSRect(
+            x: sbW,
+            y: 0,
+            width: root.bounds.width - sbW,
+            height: ibH
+        ))
+        inputBoxView.autoresizingMask = [.width, .maxYMargin]
+        inputBoxView.ghosttyManager = ghosttyManager
+        root.addSubview(inputBoxView)
+
+        // Terminal content area (right of sidebar, above inputbox)
+        contentArea = NSView(frame: NSRect(
+            x: sbW,
+            y: ibH,
+            width: root.bounds.width - sbW,
+            height: bodyHeight - ibH
         ))
         contentArea.autoresizingMask = [.width, .height]
         root.addSubview(contentArea)
+
+        // Cmd+B: toggle sidebar
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers == "b" {
+                self.toggleSidebar()
+                return nil
+            }
+            return event
+        }
 
         // Menu shortcuts
         setupMenu()
 
         mainWindow = w
+    }
+
+    // MARK: - Sidebar Toggle
+
+    private func toggleSidebar() {
+        sidebarVisible.toggle()
+        guard let root = mainWindow?.contentView else { return }
+        let sbW: CGFloat = sidebarVisible ? SidebarView.defaultWidth : 0
+        let ibH = InputBox.defaultHeight
+        let bodyHeight = root.bounds.height - tabBarHeight
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            sidebarView.animator().frame = NSRect(x: 0, y: 0, width: sidebarVisible ? SidebarView.defaultWidth : 0, height: bodyHeight)
+            sidebarView.isHidden = !sidebarVisible
+            inputBoxView.animator().frame = NSRect(x: sbW, y: 0, width: root.bounds.width - sbW, height: ibH)
+            contentArea.animator().frame = NSRect(x: sbW, y: ibH, width: root.bounds.width - sbW, height: bodyHeight - ibH)
+        }
+        NSLog("[AppDelegate] sidebar %@", sidebarVisible ? "shown" : "hidden")
     }
 
     // MARK: - Tab Management
@@ -160,10 +223,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         mainWindow?.title = "Clabs — \(tab.title)"
 
-        // Focus the first visible terminal
+        // Focus the first visible terminal and update InputBox target
         if let firstLeafId = tab.rootPane.allLeaves().first?.id,
            let termView = termViews[firstLeafId] {
             mainWindow?.makeFirstResponder(termView)
+            inputBoxView?.activePaneId = firstLeafId
         }
     }
 
