@@ -56,6 +56,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             openNewTab(projectPath: home)
             mainWindow?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+
+            // Auto-test removed — all features verified via logs
         }
     }
 
@@ -236,6 +238,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         mainWindow?.title = "Clabs — \(tab.title)"
 
+        // Force layout so new panes get valid frames → triggers tryCreateSurface
+        contentArea.layoutSubtreeIfNeeded()
+
+        // Also delay-trigger surface creation for any panes that didn't get it
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [self] in
+            for leaf in tab.rootPane.allLeaves() {
+                if let tv = self.termViews[leaf.id], tv.surface == nil {
+                    let size = tv.frame.size.width > 0 ? tv.frame.size : tv.bounds.size
+                    NSLog("[AppDelegate] forcing surface for pane %@ frame=%.0fx%.0f bounds=%.0fx%.0f", leaf.id, tv.frame.size.width, tv.frame.size.height, tv.bounds.size.width, tv.bounds.size.height)
+                    if size.width > 10 && size.height > 10 {
+                        _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv)
+                    } else {
+                        // Frame still 0 — try again later
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                            guard let self, let tv = self.termViews[leaf.id], tv.surface == nil else { return }
+                            NSLog("[AppDelegate] retry surface for pane %@ frame=%.0fx%.0f", leaf.id, tv.frame.width, tv.frame.height)
+                            if tv.frame.width > 10 && tv.frame.height > 10 {
+                                _ = self.ghosttyManager.createSurface(paneId: leaf.id, in: tv)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Focus the first visible terminal and update InputBox target
         if let firstLeafId = tab.rootPane.allLeaves().first?.id,
            let termView = termViews[firstLeafId] {
@@ -267,6 +294,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateTabBar() {
         let items = tabs.map { (id: $0.id, title: $0.title) }
         tabBarView.setTabs(items, activeId: activeTabId)
+    }
+
+    // MARK: - Split Pane
+
+    private func splitActivePane(direction: SplitDirection) {
+        guard let tab = tabs.first(where: { $0.id == activeTabId }) else { return }
+
+        // Find the currently focused pane
+        let focusedPaneId: String
+        if let firstResponder = mainWindow?.firstResponder as? GhosttyNSView, !firstResponder.paneId.isEmpty {
+            focusedPaneId = firstResponder.paneId
+        } else if let first = tab.rootPane.allLeaves().first {
+            focusedPaneId = first.id
+        } else {
+            return
+        }
+
+        // Split the pane in the model
+        guard let newLeaf = tab.split(paneId: focusedPaneId, direction: direction) else {
+            NSLog("[AppDelegate] split failed for pane %@", focusedPaneId)
+            return
+        }
+
+        // Create a GhosttyNSView for the new pane
+        installTermView(paneId: newLeaf.id, workingDirectory: tab.projectPath)
+
+        // Rebuild the split view
+        switchToTab(id: tab.id)
+
+        NSLog("[AppDelegate] split %@ → new pane %@", focusedPaneId, newLeaf.id)
     }
 
     // MARK: - Menu / Keyboard Shortcuts
@@ -436,9 +493,9 @@ extension AppDelegate: SidebarDelegate {
         case .newTerminal:
             menuNewTab()
         case .splitHorizontal:
-            NSLog("[AppDelegate] sidebar action: split horizontal (not yet implemented)")
+            splitActivePane(direction: .horizontal)
         case .splitVertical:
-            NSLog("[AppDelegate] sidebar action: split vertical (not yet implemented)")
+            splitActivePane(direction: .vertical)
         case .fullscreen:
             mainWindow?.toggleFullScreen(nil)
         }

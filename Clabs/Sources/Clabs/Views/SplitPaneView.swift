@@ -31,6 +31,12 @@ final class SplitPaneView: NSView {
     /// Must be called after setting delegate.
     func build() {
         buildLayout(from: rootNode, into: self)
+        // Apply initial ratios after layout
+        DispatchQueue.main.async { [self] in
+            for ctrl in splitViewControllers.values {
+                ctrl.applyInitialRatio()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }

@@ -23,7 +23,7 @@ final class TabBarView: NSView {
     private let barHeight: CGFloat = 38
     private let tabMinWidth: CGFloat = 100
     private let tabMaxWidth: CGFloat = 200
-    private let closeBtnSize: CGFloat = 16
+    private let closeBtnSize: CGFloat = 24
     private let addBtnWidth: CGFloat = 38
 
     // Colors (mutable for theme support)

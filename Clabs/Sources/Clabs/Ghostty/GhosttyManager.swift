@@ -130,7 +130,7 @@ class GhosttyManager: ObservableObject {
         // Scale factor from screen
         let scaleFactor = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
         surfaceConfig.scale_factor = scaleFactor
-        surfaceConfig.font_size = 0 // use config default
+        surfaceConfig.font_size = 14 // explicit font size
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
         // Working directory
@@ -177,4 +177,10 @@ class GhosttyManager: ObservableObject {
     func surface(for paneId: String) -> ghostty_surface_t? {
         surfaces[paneId]?.surface
     }
+
+    func firstSurface() -> ghostty_surface_t? {
+        surfaces.values.first?.surface
+    }
+
+    var surfaceCount: Int { surfaces.count }
 }

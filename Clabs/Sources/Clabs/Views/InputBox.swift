@@ -24,7 +24,7 @@ final class InputBox: NSView {
     private var ghostColor: NSColor       = ThemePresets.defaultDark.ui.textSecondary.withAlphaComponent(0.7)
 
     // MARK: - Subviews
-    private var textField: NSTextField!
+    private(set) var textField: NSTextField!
     private var ghostTextField: NSTextField!
 
     // MARK: - Autocomplete
@@ -39,9 +39,21 @@ final class InputBox: NSView {
         didSet { ghostTextField?.stringValue = ghostText }
     }
 
+    // MARK: - Click to focus
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        window?.makeFirstResponder(textField)
+        NSLog("[InputBox] mouseDown → makeFirstResponder(textField), result=%d", window?.firstResponder === textField.currentEditor() ? 1 : 0)
+    }
+
     // MARK: - Dependencies
     weak var ghosttyManager: GhosttyManager?
-    var activePaneId: String = "pane-main"
+    var activePaneId: String = "" {
+        didSet {
+            NSLog("[InputBox] activePaneId set to: %@", activePaneId)
+        }
+    }
 
     // MARK: - Init
 
@@ -102,6 +114,8 @@ final class InputBox: NSView {
         textField.textColor = textColor
         textField.backgroundColor = .clear
         textField.isBordered = false
+        textField.isEditable = true
+        textField.isSelectable = true
         textField.isBezeled = false
         textField.focusRingType = .none
         textField.drawsBackground = false
@@ -378,6 +392,9 @@ final class InputBox: NSView {
 
     // MARK: - Submit
 
+    /// Public entry point for programmatic submit
+    func triggerSubmit() { submitCommand() }
+
     @objc private func submitCommand() {
         let raw = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
@@ -405,8 +422,17 @@ final class InputBox: NSView {
         guard let manager = ghosttyManager else {
             NSLog("[InputBox] no ghosttyManager"); return
         }
-        guard let surface = manager.surface(for: activePaneId) else {
-            NSLog("[InputBox] surface not found for pane: %@", activePaneId); return
+        // Try activePaneId first, fall back to any available surface
+        var surface = manager.surface(for: activePaneId)
+        if surface == nil {
+            // activePaneId might be stale — try first available
+            if let firstSurface = manager.firstSurface() {
+                surface = firstSurface
+                NSLog("[InputBox] using fallback surface (activePaneId '%@' not found)", activePaneId)
+            }
+        }
+        guard let surface else {
+            NSLog("[InputBox] no surface available at all"); return
         }
         text.withCString { ptr in
             ghostty_surface_text(surface, ptr, UInt(text.utf8.count))

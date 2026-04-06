@@ -59,10 +59,14 @@ final class ThemeManager {
             return
         }
         ghostty_config_load_default_files(cfg)
-        ghostty_config_load_file(cfg, tmpURL.path)
+        tmpURL.path.withCString { path in
+            ghostty_config_load_file(cfg, path)
+        }
         ghostty_config_finalize(cfg)
         ghostty_app_update_config(app, cfg)
-        ghostty_config_free(cfg)
+        // Don't free cfg — ghostty_app_update_config takes ownership
+
+        NSLog("[ThemeManager] ghostty config reloaded from %@", tmpURL.path)
 
         NSLog("[ThemeManager] applied theme '\(currentTheme.name)' to ghostty")
     }
@@ -80,9 +84,9 @@ final class ThemeManager {
         lines.append("cursor-text = \(hexString(t.cursorAccent))")
         lines.append("selection-background = \(hexStringWithAlpha(t.selectionBackground))")
 
-        // ANSI palette: ghostty uses palette = N=#RRGGBB
+        // ANSI palette: ghostty uses palette = N=RRGGBB
         for (index, color) in t.ansi.enumerated() {
-            lines.append("palette = \(index)=#\(hexString(color))")
+            lines.append("palette = \(index)=\(hexString(color))")
         }
 
         return lines.joined(separator: "\n") + "\n"

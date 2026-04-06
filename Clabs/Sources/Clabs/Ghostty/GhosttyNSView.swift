@@ -58,7 +58,9 @@ class GhosttyNSView: NSView, NSTextInputClient {
 
     private func tryCreateSurface() {
         guard !surfaceCreated, let manager, !paneId.isEmpty else { return }
-        guard frame.width > 10, frame.height > 10 else { return }
+        // Use bounds (not frame) — AutoLayout sets bounds but frame may be zero
+        let size = bounds.size.width > 0 ? bounds.size : frame.size
+        guard size.width > 10, size.height > 10 else { return }
         guard window != nil else { return }
 
         NSLog("[GhosttyNSView] creating surface: frame=%.0fx%.0f pane=%@", frame.width, frame.height, paneId)
@@ -276,6 +278,7 @@ class GhosttyNSView: NSView, NSTextInputClient {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        tryCreateSurface() // surface may not exist yet if split was just created
         guard let surface else { return }
         ghostty_surface_set_size(surface, UInt32(newSize.width), UInt32(newSize.height))
     }

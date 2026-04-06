@@ -201,12 +201,12 @@ final class SidebarView: NSView {
             y += sectionHeight
         }
 
-        // Title bar at top
+        // Refresh button bar (compact, no title)
         let titleBar = makeTitleBar(width: bounds.width)
-        titleBar.frame = NSRect(x: 0, y: y, width: bounds.width, height: 48)
+        titleBar.frame = NSRect(x: 0, y: y, width: bounds.width, height: 36)
         titleBar.autoresizingMask = [.width]
         container.addSubview(titleBar)
-        y += 48
+        y += 36
 
         // Footer
         let footer = makeFooter(width: bounds.width)
@@ -215,12 +215,14 @@ final class SidebarView: NSView {
         container.addSubview(footer)
 
         container.frame = NSRect(x: 0, y: 0, width: bounds.width, height: y)
-        scrollView.documentView = container
+
+        // Use a flipped container so content starts from top
+        let flippedContainer = FlippedView(frame: container.frame)
+        flippedContainer.addSubview(container)
+        container.frame.origin = .zero
+        scrollView.documentView = flippedContainer
         stackContainer = container
         sectionViews = builtViews
-
-        // Scroll to top
-        scrollView.documentView?.scroll(NSPoint(x: 0, y: max(0, y - scrollView.bounds.height)))
     }
 
     private func toggleSection(at index: Int) {
@@ -231,6 +233,7 @@ final class SidebarView: NSView {
     // MARK: - Item click handling
 
     private func handleItemClick(sectionIndex: Int, itemIndex: Int) {
+        NSLog("[SidebarView] handleItemClick section=%d item=%d delegate=%d", sectionIndex, itemIndex, delegate != nil ? 1 : 0)
         guard sectionIndex < sections.count else { return }
         let section = sections[sectionIndex]
         guard itemIndex < section.items.count else { return }
@@ -259,14 +262,8 @@ final class SidebarView: NSView {
         v.wantsLayer = true
         v.layer?.backgroundColor = bgColor.cgColor
 
-        let label = NSTextField(labelWithString: "Clabs")
-        label.font = .systemFont(ofSize: 16, weight: .semibold)
-        label.textColor = textPrimary
-        label.frame = NSRect(x: 16, y: 12, width: 120, height: 24)
-        v.addSubview(label)
-
-        // Refresh button
-        let refreshBtn = NSButton(frame: NSRect(x: width - 40, y: 10, width: 28, height: 28))
+        // Refresh button only — no title text
+        let refreshBtn = NSButton(frame: NSRect(x: width - 40, y: 4, width: 28, height: 28))
         refreshBtn.bezelStyle = .inline
         refreshBtn.isBordered = false
         refreshBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh skills")
@@ -472,8 +469,8 @@ private final class ItemRowButton: NSView {
 
     override func mouseUp(with event: NSEvent) {
         layer?.backgroundColor = NSColor.clear.cgColor
-        // Check if mouse is still inside
         let loc = convert(event.locationInWindow, from: nil)
+        NSLog("[ItemRowButton] mouseUp section=%d item=%d inBounds=%d onPress=%d", sectionIndex, itemIndex, bounds.contains(loc) ? 1 : 0, onPress != nil ? 1 : 0)
         if bounds.contains(loc) {
             onPress?(sectionIndex, itemIndex)
         }
@@ -498,4 +495,10 @@ private final class ItemRowButton: NSView {
             userInfo: nil
         ))
     }
+}
+
+
+// MARK: - FlippedView (top-to-bottom layout for NSScrollView)
+private class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
