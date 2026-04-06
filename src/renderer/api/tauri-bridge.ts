@@ -224,6 +224,44 @@ const api: IPCApi = {
     save: (data: string) => invoke('session_save', { data }) as Promise<void>,
     load: () => invoke('session_load') as Promise<string | null>,
   },
+
+  ghostty: {
+    create: (paneId: string, config: Record<string, unknown>) =>
+      invoke('ghostty_create', { paneId, config }) as Promise<void>,
+
+    destroy: (paneId: string) =>
+      invoke('ghostty_destroy', { paneId }) as Promise<void>,
+
+    setFrame: (paneId: string, x: number, y: number, width: number, height: number) =>
+      invoke('ghostty_set_frame', { paneId, x, y, width, height }) as Promise<void>,
+
+    setVisible: (paneId: string, visible: boolean) =>
+      invoke('ghostty_set_visible', { paneId, visible }) as Promise<void>,
+
+    focus: (paneId: string) =>
+      invoke('ghostty_focus', { paneId }) as Promise<void>,
+
+    applyTheme: (paneId: string, theme: Record<string, string>) =>
+      invoke('ghostty_apply_theme', { paneId, theme }) as Promise<void>,
+
+    search: (paneId: string, query: string, direction: 'next' | 'prev') =>
+      invoke('ghostty_search', { paneId, query, direction }) as Promise<void>,
+
+    searchClear: (paneId: string) =>
+      invoke('ghostty_search_clear', { paneId }) as Promise<void>,
+
+    getSelection: (paneId: string) =>
+      invoke('ghostty_get_selection', { paneId }) as Promise<string>,
+
+    getBufferText: (paneId: string, maxLines: number) =>
+      invoke('ghostty_get_buffer_text', { paneId, maxLines }) as Promise<string[]>,
+
+    copy: (paneId: string) =>
+      invoke('ghostty_copy', { paneId }) as Promise<string>,
+
+    paste: (paneId: string, text: string) =>
+      invoke('ghostty_paste', { paneId, text }) as Promise<void>,
+  },
 };
 
 // Expose as window.api for compatibility

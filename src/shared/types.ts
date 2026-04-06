@@ -396,6 +396,20 @@ export interface IPCApi {
     save: (data: string) => Promise<void>;
     load: () => Promise<string | null>;
   };
+  ghostty: {
+    create: (paneId: string, config: Record<string, unknown>) => Promise<void>;
+    destroy: (paneId: string) => Promise<void>;
+    setFrame: (paneId: string, x: number, y: number, width: number, height: number) => Promise<void>;
+    setVisible: (paneId: string, visible: boolean) => Promise<void>;
+    focus: (paneId: string) => Promise<void>;
+    applyTheme: (paneId: string, theme: Record<string, string>) => Promise<void>;
+    search: (paneId: string, query: string, direction: 'next' | 'prev') => Promise<void>;
+    searchClear: (paneId: string) => Promise<void>;
+    getSelection: (paneId: string) => Promise<string>;
+    getBufferText: (paneId: string, maxLines: number) => Promise<string[]>;
+    copy: (paneId: string) => Promise<string>;
+    paste: (paneId: string, text: string) => Promise<void>;
+  };
 }
 
 declare global {
