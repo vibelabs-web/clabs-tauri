@@ -311,33 +311,76 @@ impl GhosttyManager {
     /// Apply theme colors to the terminal.
     ///
     /// Theme is a map of color names to hex values (e.g., "background" -> "#1e1e2e").
-    /// This creates a new config with the colors applied and updates the surface.
+    /// Keys match `TerminalTheme` from `src/shared/themes/types.ts`:
+    /// - Direct: background, foreground, cursor, cursorAccent, selectionBackground
+    /// - ANSI: black, red, green, yellow, blue, magenta, cyan, white
+    /// - Bright ANSI: brightBlack, brightRed, ... brightWhite
+    ///
+    /// The colors are written to a temp config file, loaded via ghostty_config_load_file,
+    /// and applied to the surface via ghostty_surface_update_config.
     pub fn apply_theme(&self, pane_id: &str, theme: HashMap<String, String>) {
+        // Write theme to a temp config file
+        let config_path = match super::theme::write_theme_config_file(&theme) {
+            Ok(path) => path,
+            Err(e) => {
+                log::error!("ghostty: failed to write theme config: {}", e);
+                return;
+            }
+        };
+
         let instances = match self.instances.lock() {
             Ok(i) => i,
-            Err(_) => return,
+            Err(_) => {
+                let _ = std::fs::remove_file(&config_path);
+                return;
+            }
         };
 
         if let Some(instance) = instances.get(pane_id) {
             unsafe {
-                // Clone the existing config and apply theme overrides
+                // Clone the existing config as a base
                 let new_config = ghostty_config_clone(instance.config);
                 if new_config.is_null() {
                     log::error!("ghostty: failed to clone config for theme");
+                    let _ = std::fs::remove_file(&config_path);
                     return;
                 }
 
-                // Theme colors would be applied via config key-value pairs
-                // e.g., "background", "foreground", "palette" entries
-                for (key, value) in &theme {
-                    log::debug!("ghostty: theme {}={}", key, value);
+                // Load the theme overrides from the temp file
+                if let Ok(c_path) = CString::new(config_path.to_string_lossy().as_bytes()) {
+                    ghostty_config_load_file(new_config, c_path.as_ptr());
+                    log::debug!(
+                        "ghostty: loaded theme config from {}",
+                        config_path.display()
+                    );
+                } else {
+                    log::error!("ghostty: invalid path for theme config");
+                    ghostty_config_free(new_config);
+                    let _ = std::fs::remove_file(&config_path);
+                    return;
                 }
 
                 ghostty_config_finalize(new_config);
+
+                // Check for diagnostics
+                let diag_count = ghostty_config_diagnostics_count(new_config);
+                if diag_count > 0 {
+                    for i in 0..diag_count {
+                        let diag = ghostty_config_get_diagnostic(new_config, i);
+                        if !diag.message.is_null() {
+                            let msg = std::ffi::CStr::from_ptr(diag.message).to_string_lossy();
+                            log::warn!("ghostty theme config diagnostic: {}", msg);
+                        }
+                    }
+                }
+
                 ghostty_surface_update_config(instance.surface, new_config);
                 ghostty_config_free(new_config);
             }
         }
+
+        // Cleanup temp file
+        let _ = std::fs::remove_file(&config_path);
     }
 
     /// Trigger a search in the terminal.
