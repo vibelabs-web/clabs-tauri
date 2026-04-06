@@ -34,6 +34,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Currently visible SplitPaneView
     private var currentSplitView: SplitPaneView?
 
+    // CLI Builder panel
+    private var cliBuilderPanel: NSPanel?
+    private var cliBuilderView: CLIBuilderView?
+
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -357,10 +361,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         newTab.target = self
         tabMenu.addItem(newTab)
 
+        // Settings (Cmd+,) — add to App menu
+        let appMenu = mainMenu.item(at: 0)?.submenu
+        let settingsItem = NSMenuItem(title: "Preferences…", action: #selector(menuOpenSettings), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.target = self
+        appMenu?.insertItem(settingsItem, at: 0)
+
         let closeTab = NSMenuItem(title: "Close Tab", action: #selector(menuCloseTab), keyEquivalent: "w")
         closeTab.keyEquivalentModifierMask = .command
         closeTab.target = self
         tabMenu.addItem(closeTab)
+
+        tabMenu.addItem(.separator())
+
+        // CLI Builder (Cmd+Shift+B)
+        let cliItem = NSMenuItem(title: "CLI Builder…", action: #selector(menuOpenCLIBuilder), keyEquivalent: "b")
+        cliItem.keyEquivalentModifierMask = [.command, .shift]
+        cliItem.target = self
+        tabMenu.addItem(cliItem)
 
         tabMenu.addItem(.separator())
 
@@ -402,6 +421,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let theme = ThemePresets.all.first(where: { $0.id == id }) else { return }
         ThemeManager.shared.apply(theme, ghosttyManager: ghosttyManager)
         NSLog("[AppDelegate] theme changed to: %@", theme.name)
+    }
+
+    @objc private func menuOpenSettings() {
+        SettingsWindow.open()
+    }
+
+    @objc private func menuOpenCLIBuilder() {
+        if let panel = cliBuilderPanel {
+            panel.makeKeyAndOrderFront(nil)
+            return
+        }
+        let panelWidth: CGFloat = 500
+        let panelHeight: CGFloat = 420
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            styleMask: [.titled, .closable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "CLI 명령어 빌더"
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        if let mw = mainWindow {
+            let mf = mw.frame
+            panel.setFrameOrigin(NSPoint(
+                x: mf.origin.x + mf.width - panelWidth - 20,
+                y: mf.origin.y + mf.height - panelHeight - 40
+            ))
+        } else {
+            panel.center()
+        }
+        let builderView = CLIBuilderView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
+        builderView.autoresizingMask = [.width, .height]
+        builderView.delegate = self
+        panel.contentView = builderView
+        cliBuilderView = builderView
+        cliBuilderPanel = panel
+        panel.makeKeyAndOrderFront(nil)
     }
 
     @objc private func menuNewTab() {
@@ -537,5 +594,17 @@ extension AppDelegate: SplitPaneDelegate {
             updateRatio(in: &s.second, splitId: splitId, ratio: ratio)
             node = .split(s)
         }
+    }
+}
+
+// MARK: - CLIBuilderDelegate
+
+extension AppDelegate: CLIBuilderDelegate {
+
+    func cliBuilder(_ view: CLIBuilderView, didExecute command: String) {
+        inputBoxView?.insertText(command)
+        cliBuilderPanel?.orderOut(nil)
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSLog("[AppDelegate] CLIBuilder execute: %@", command)
     }
 }
