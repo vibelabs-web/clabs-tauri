@@ -400,7 +400,7 @@ final class SectionHeaderView: NSView {
         // Title + count
         let countStr = " (\(section.items.count))"
         let titleLabel = NSTextField(labelWithString: section.title.uppercased() + countStr)
-        titleLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
         titleLabel.textColor = textSecondary
         titleLabel.frame = NSRect(x: 32, y: (headerH - 16) / 2, width: 200, height: 16)
         headerRow.addSubview(titleLabel)
@@ -425,7 +425,7 @@ final class SectionHeaderView: NSView {
         }
 
         let label = NSTextField(labelWithString: text)
-        label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        label.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
         label.textColor = textPrimary
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 40, y: (itemH - 16) / 2, width: width - 56, height: 16)
