@@ -1,10 +1,23 @@
 // 터미널 인스턴스 레지스트리 — paneId별 xterm Terminal 참조
 // 복사 기능에서 터미널 버퍼 직접 접근용
+// ghostty 모드: xterm 없이 Tauri IPC invoke로 텍스트 조회
 
 import type { Terminal } from 'xterm';
 import type { ConversationTurn } from '@renderer/types/timeline';
 
 const terminals = new Map<string, Terminal>();
+
+/**
+ * ghostty 모드 여부 확인
+ * - paneId에 등록된 xterm Terminal이 없고
+ * - localStorage에 clabs.useNativeTerminal === 'true' 인 경우
+ */
+function isGhosttyMode(paneId: string): boolean {
+  return (
+    !terminals.has(paneId) &&
+    localStorage.getItem('clabs.useNativeTerminal') === 'true'
+  );
+}
 
 export function registerTerminal(paneId: string, terminal: Terminal): void {
   terminals.set(paneId, terminal);
@@ -401,6 +414,7 @@ export function scrollToLine(paneId: string, line: number): void {
 
 /**
  * 복사용: 선택 텍스트 → 그대로 / 없으면 → 마지막 응답을 마크다운으로
+ * (xterm 동기 버전 — xterm 모드에서만 유효)
  */
 export function getTerminalTextForCopy(paneId: string): string {
   const selection = getTerminalSelection(paneId);
@@ -410,6 +424,139 @@ export function getTerminalTextForCopy(paneId: string): string {
   if (!terminal) return '';
 
   const lines = getBufferLines(terminal, 500);
+  const responseLines = extractLastResponse(lines);
+  if (responseLines.length === 0) return '';
+
+  return toMarkdown(responseLines);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ghostty 듀얼 모드 Async API
+// ghostty 모드: window.api.ghostty.* via Tauri invoke
+// xterm 모드: 기존 동기 로직을 그대로 재사용
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * ghostty API 접근자 (타입 안전)
+ */
+function ghosttyApi(): { getSelection: (paneId: string) => Promise<string | undefined>; getBufferText: (paneId: string, maxLines: number) => Promise<string[]> } | undefined {
+  return (window as any).api?.ghostty;
+}
+
+/**
+ * [Async] 선택 텍스트 반환
+ * ghostty 모드: IPC를 통해 ghostty 선택 텍스트 조회
+ * xterm 모드: 기존 동기 API 결과를 Promise로 래핑
+ */
+export async function getTerminalSelectionAsync(paneId: string): Promise<string | undefined> {
+  if (isGhosttyMode(paneId)) {
+    try {
+      return await ghosttyApi()?.getSelection(paneId);
+    } catch {
+      return undefined;
+    }
+  }
+  const result = getTerminalSelection(paneId);
+  return result || undefined;
+}
+
+/**
+ * [Async] 버퍼 줄 배열 반환 (최근 N줄)
+ * ghostty 모드: IPC를 통해 버퍼 텍스트 조회
+ * xterm 모드: 기존 getBufferLines 결과를 Promise로 래핑
+ */
+export async function getBufferLinesAsync(paneId: string, maxLines = 500): Promise<string[]> {
+  if (isGhosttyMode(paneId)) {
+    try {
+      return (await ghosttyApi()?.getBufferText(paneId, maxLines)) ?? [];
+    } catch {
+      return [];
+    }
+  }
+  const terminal = terminals.get(paneId);
+  if (!terminal) return [];
+  return getBufferLines(terminal, maxLines);
+}
+
+/**
+ * [Async] 모든 대화 턴 추출
+ * ghostty 모드: IPC로 버퍼를 가져온 후 동일한 파싱 로직 적용
+ * xterm 모드: 기존 동기 extractAllTurns 결과를 Promise로 래핑
+ */
+export async function extractAllTurnsAsync(paneId: string): Promise<ConversationTurn[]> {
+  if (!isGhosttyMode(paneId)) {
+    return extractAllTurns(paneId);
+  }
+
+  const lines = await getBufferLinesAsync(paneId, 2000);
+  if (lines.length === 0) return [];
+
+  const isPrompt = (line: string) => /^\s*❯\s/.test(line);
+  const turns: ConversationTurn[] = [];
+  let turnId = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i];
+    if (!isPrompt(text)) continue;
+
+    // 이전 어시스턴트 턴 종료
+    if (turns.length > 0 && turns[turns.length - 1].type === 'assistant') {
+      turns[turns.length - 1].endLine = i - 1;
+    }
+
+    const userText = text.replace(/^\s*❯\s*/, '').trim();
+    if (userText) {
+      turns.push({
+        id: turnId++,
+        type: 'user',
+        preview: userText.substring(0, 100),
+        startLine: i,
+        endLine: i,
+        timestamp: Date.now(),
+        paneId,
+      });
+
+      turns.push({
+        id: turnId++,
+        type: 'assistant',
+        preview: '',
+        startLine: i + 1,
+        endLine: lines.length - 1,
+        timestamp: Date.now(),
+        paneId,
+      });
+    }
+  }
+
+  // 어시스턴트 턴 미리보기 채우기
+  for (const turn of turns) {
+    if (turn.type === 'assistant' && turn.startLine < lines.length) {
+      const previewLines: string[] = [];
+      for (let j = turn.startLine; j <= Math.min(turn.startLine + 2, turn.endLine); j++) {
+        const text = lines[j]?.trim();
+        if (text) previewLines.push(text);
+      }
+      turn.preview = previewLines.join(' ').substring(0, 100) || '(응답 처리 중...)';
+    }
+  }
+
+  return turns;
+}
+
+/**
+ * [Async] 복사용 텍스트 반환
+ * ghostty 모드: 선택 텍스트 → 없으면 마지막 응답을 마크다운으로
+ * xterm 모드: 기존 동기 getTerminalTextForCopy 결과를 Promise로 래핑
+ */
+export async function getTerminalTextForCopyAsync(paneId: string): Promise<string> {
+  if (!isGhosttyMode(paneId)) {
+    return getTerminalTextForCopy(paneId);
+  }
+
+  const selection = await getTerminalSelectionAsync(paneId);
+  if (selection) return selection;
+
+  const lines = await getBufferLinesAsync(paneId, 500);
   const responseLines = extractLastResponse(lines);
   if (responseLines.length === 0) return '';
 
