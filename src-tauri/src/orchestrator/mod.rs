@@ -203,12 +203,29 @@ impl Drop for OrchestratorServer {
 
 /// Check if a process with the given PID is still alive
 pub fn is_pid_alive(pid: u32) -> bool {
-    // kill -0 checks if process exists without sending a signal
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        // kill -0 checks if process exists without sending a signal
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        // Use tasklist to check if PID exists
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                !out.contains("No tasks") && out.contains(&pid.to_string())
+            })
+            .unwrap_or(false)
+    }
 }
