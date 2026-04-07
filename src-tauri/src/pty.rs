@@ -85,9 +85,12 @@ impl PtyPoolManager {
 
         cmd.env("TERM", "xterm-256color");
         cmd.env("HOME", home_dir.to_string_lossy().as_ref());
-        cmd.env("LANG", "ko_KR.UTF-8");
-        cmd.env("LC_ALL", "ko_KR.UTF-8");
-        cmd.env("LC_CTYPE", "UTF-8");
+        #[cfg(not(windows))]
+        {
+            cmd.env("LANG", "ko_KR.UTF-8");
+            cmd.env("LC_ALL", "ko_KR.UTF-8");
+            cmd.env("LC_CTYPE", "UTF-8");
+        }
 
         let mut paths: Vec<String> = Vec::new();
         let path_candidates = [
@@ -103,15 +106,27 @@ impl PtyPoolManager {
                 paths.push(p.to_string_lossy().to_string());
             }
         }
-        paths.extend([
-            "/opt/homebrew/bin".to_string(),
-            "/usr/local/bin".to_string(),
-            "/usr/bin".to_string(),
-            "/bin".to_string(),
-            "/usr/sbin".to_string(),
-            "/sbin".to_string(),
-        ]);
-        cmd.env("PATH", paths.join(":"));
+
+        #[cfg(not(windows))]
+        {
+            paths.extend([
+                "/opt/homebrew/bin".to_string(),
+                "/usr/local/bin".to_string(),
+                "/usr/bin".to_string(),
+                "/bin".to_string(),
+                "/usr/sbin".to_string(),
+                "/sbin".to_string(),
+            ]);
+            cmd.env("PATH", paths.join(":"));
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, prepend custom paths to existing PATH (separator is ";")
+            if let Ok(system_path) = std::env::var("PATH") {
+                paths.push(system_path);
+            }
+            cmd.env("PATH", paths.join(";"));
+        }
 
         for key in &["USER", "SHELL", "SSH_AUTH_SOCK", "DISPLAY"] {
             if let Ok(val) = std::env::var(key) {

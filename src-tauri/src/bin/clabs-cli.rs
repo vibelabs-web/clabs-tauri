@@ -9,11 +9,22 @@
 //!   clabs pane wait-response <pane_id> [--timeout SEC] [--cli-type TYPE]
 //!   clabs pane get-response <pane_id> "message" [--timeout SEC] [--cli-type TYPE]
 
+#[cfg(windows)]
+fn main() {
+    eprintln!("clabs CLI is not supported on Windows (requires Unix domain sockets)");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
 use std::path::PathBuf;
 
+#[cfg(unix)]
 #[derive(Serialize)]
 struct Request {
     id: String,
@@ -40,6 +51,7 @@ struct Request {
     cmux_target: Option<String>,
 }
 
+#[cfg(unix)]
 #[derive(Deserialize)]
 struct Response {
     #[allow(dead_code)]
@@ -49,6 +61,7 @@ struct Response {
     error: Option<String>,
 }
 
+#[cfg(unix)]
 fn get_socket_path() -> PathBuf {
     if let Ok(path) = std::env::var("CLABS_SOCKET") {
         PathBuf::from(path)
@@ -58,6 +71,7 @@ fn get_socket_path() -> PathBuf {
     }
 }
 
+#[cfg(unix)]
 fn send_request(req: Request) -> Result<Response, String> {
     let socket_path = get_socket_path();
 
@@ -79,6 +93,7 @@ fn send_request(req: Request) -> Result<Response, String> {
     serde_json::from_str::<Response>(&line).map_err(|e| format!("Parse error: {}", e))
 }
 
+#[cfg(unix)]
 fn print_usage() {
     eprintln!("clabs — Inter-pane orchestration CLI for Clabs terminal");
     eprintln!();
@@ -110,6 +125,7 @@ fn print_usage() {
     eprintln!("  CLABS_PANE_ID       Current pane ID (set by Clabs)");
 }
 
+#[cfg(unix)]
 fn parse_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.iter()
         .position(|a| a == flag)
@@ -117,6 +133,7 @@ fn parse_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(|s| s.as_str())
 }
 
+#[cfg(unix)]
 /// Parse target as either pane_id (starts with "pane-") or name
 fn parse_target(target: &str) -> (Option<String>, Option<String>) {
     if target.starts_with("pane-") {
@@ -126,6 +143,7 @@ fn parse_target(target: &str) -> (Option<String>, Option<String>) {
     }
 }
 
+#[cfg(unix)]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -256,6 +274,7 @@ fn main() {
     print_result(result);
 }
 
+#[cfg(unix)]
 fn print_result(result: Result<Response, String>) {
     match result {
         Ok(resp) => {
