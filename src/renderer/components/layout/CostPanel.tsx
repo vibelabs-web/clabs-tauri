@@ -1,8 +1,8 @@
 // @TASK WU-3 - 비용/토큰 대시보드 패널
-// @SPEC Claude Sonnet 4 가격 기준 실시간 비용 추적 + 시간별 차트
+// 모델 자동 감지 + 1M context 가산가격 + Cache Creation 포함 + Max 플랜 라벨.
 
 import React, { useEffect } from 'react';
-import { useCostStore, calculateCost } from '@renderer/stores/cost';
+import { useCostStore, calculateCost, getPricing } from '@renderer/stores/cost';
 import type { UsageData } from '@renderer/types/usage';
 
 interface CostPanelProps {
@@ -76,18 +76,27 @@ export const CostPanel: React.FC<CostPanelProps> = ({ usage }) => {
         outputTokens: usage.outputTokens || 0,
         cacheReadTokens: usage.cacheReadTokens || 0,
         cacheCreationTokens: usage.cacheCreationTokens || 0,
-      });
+        model: usage.model ?? null,
+        isLongContext: Boolean(usage.isLongContext),
+      } as never);
     }
-  }, [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, addSnapshot]);
+  }, [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheCreationTokens, usage.model, usage.isLongContext, addSnapshot]);
 
   const sessionCost = getSessionCost();
   const hourlyData = getHourlyData();
 
-  // 현재 누적 비용 계산 (토큰 기준)
+  // 모델별 가격표 — Opus / Sonnet / Haiku 자동 매핑.
+  const pricing = getPricing(usage.model, Boolean(usage.isLongContext));
+  const M = 1_000_000;
+
+  // 현재 누적 비용 계산 (Cache Creation 포함, 모델별 가격 적용)
   const currentCost = calculateCost(
     usage.inputTokens || 0,
     usage.outputTokens || 0,
-    usage.cacheReadTokens || 0
+    usage.cacheReadTokens || 0,
+    usage.cacheCreationTokens || 0,
+    usage.model,
+    Boolean(usage.isLongContext),
   );
 
   // 비용 포맷팅: 0.01 미만이면 소수점 4자리
@@ -103,6 +112,11 @@ export const CostPanel: React.FC<CostPanelProps> = ({ usage }) => {
     return tokens.toString();
   };
 
+  // Claude Max 플랜 휴리스틱 — model id에 "max"가 들어가거나
+  // 추후 별도 plan 정보가 추가되면 여기서 판정.
+  // 현재 Anthropic API는 model id에 plan을 표시하지 않으므로 대부분 false.
+  const isMaxPlan = false;
+
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
       {/* 세션 비용 요약 */}
@@ -116,45 +130,56 @@ export const CostPanel: React.FC<CostPanelProps> = ({ usage }) => {
         <div className="text-xs text-text-muted mt-1">
           누적: {formatCost(sessionCost)} · 스냅샷: {snapshots.length}개
         </div>
+        <div className="text-[10px] text-text-muted mt-1">
+          {pricing.label}
+          {usage.model ? ` · ${usage.model}` : ' · model unknown'}
+          {isMaxPlan && ' · Claude Max (정액제 — 참고용)'}
+        </div>
       </div>
 
-      {/* 토큰 분석 카드 (2x2 그리드) */}
+      {/* 토큰 분석 카드 (2x3 그리드 — Cache Creation 추가) */}
       <div className="grid grid-cols-2 gap-2">
-        {/* Input 토큰 */}
         <div className="bg-bg-tertiary rounded-lg p-3">
           <div className="text-xs text-blue-400 font-medium">Input</div>
           <div className="text-sm font-bold text-text-primary">
             {formatTokens(usage.inputTokens || 0)}
           </div>
           <div className="text-[10px] text-text-muted">
-            {formatCost((usage.inputTokens || 0) * 3 / 1_000_000)}
+            {formatCost((usage.inputTokens || 0) * pricing.input)}
           </div>
         </div>
 
-        {/* Output 토큰 */}
         <div className="bg-bg-tertiary rounded-lg p-3">
           <div className="text-xs text-emerald-400 font-medium">Output</div>
           <div className="text-sm font-bold text-text-primary">
             {formatTokens(usage.outputTokens || 0)}
           </div>
           <div className="text-[10px] text-text-muted">
-            {formatCost((usage.outputTokens || 0) * 15 / 1_000_000)}
+            {formatCost((usage.outputTokens || 0) * pricing.output)}
           </div>
         </div>
 
-        {/* Cache Read 토큰 */}
         <div className="bg-bg-tertiary rounded-lg p-3">
           <div className="text-xs text-amber-400 font-medium">Cache Read</div>
           <div className="text-sm font-bold text-text-primary">
             {formatTokens(usage.cacheReadTokens || 0)}
           </div>
           <div className="text-[10px] text-text-muted">
-            {formatCost((usage.cacheReadTokens || 0) * 0.30 / 1_000_000)}
+            {formatCost((usage.cacheReadTokens || 0) * pricing.cacheRead)}
           </div>
         </div>
 
-        {/* 메시지 수 */}
         <div className="bg-bg-tertiary rounded-lg p-3">
+          <div className="text-xs text-orange-400 font-medium">Cache Write</div>
+          <div className="text-sm font-bold text-text-primary">
+            {formatTokens(usage.cacheCreationTokens || 0)}
+          </div>
+          <div className="text-[10px] text-text-muted">
+            {formatCost((usage.cacheCreationTokens || 0) * pricing.cacheWrite)}
+          </div>
+        </div>
+
+        <div className="bg-bg-tertiary rounded-lg p-3 col-span-2">
           <div className="text-xs text-pink-400 font-medium">Messages</div>
           <div className="text-sm font-bold text-text-primary">
             {usage.messageCount || 0}
@@ -168,12 +193,18 @@ export const CostPanel: React.FC<CostPanelProps> = ({ usage }) => {
         <HourlyChart data={hourlyData} />
       </div>
 
-      {/* Claude Sonnet 4 모델 가격 정보 */}
+      {/* 모델별 가격 정보 (감지된 모델 + long context 자동 반영) */}
       <div className="bg-bg-tertiary/50 rounded-lg p-3 text-[10px] text-text-muted space-y-1">
-        <div className="font-semibold text-text-secondary text-xs mb-1">Claude Sonnet 4 가격</div>
-        <div>Input: $3.00/MTok</div>
-        <div>Output: $15.00/MTok</div>
-        <div>Cache Read: $0.30/MTok</div>
+        <div className="font-semibold text-text-secondary text-xs mb-1">
+          {pricing.label} 가격
+        </div>
+        <div>Input: ${(pricing.input * M).toFixed(2)}/MTok</div>
+        <div>Output: ${(pricing.output * M).toFixed(2)}/MTok</div>
+        <div>Cache Read: ${(pricing.cacheRead * M).toFixed(2)}/MTok</div>
+        <div>Cache Write: ${(pricing.cacheWrite * M).toFixed(2)}/MTok</div>
+        {pricing.long && (
+          <div className="text-amber-400 mt-1">⚠ 1M context 모드 (200K+ 입력 가산가격)</div>
+        )}
       </div>
     </div>
   );

@@ -269,6 +269,8 @@ pub async fn usage_get(state: State<'_, AppState>) -> Result<Value, String> {
         "cacheReadTokens": session_usage.cache_read_tokens,
         "cacheCreationTokens": session_usage.cache_creation_tokens,
         "messageCount": session_usage.message_count,
+        "model": session_usage.model,
+        "isLongContext": session_usage.is_long_context,
         "fiveHourUsage": api_usage.as_ref().map(|u| u.five_hour.utilization),
         "fiveHourReset": api_usage.as_ref().and_then(|u| u.five_hour.resets_at.clone()),
         "sevenDayUsage": api_usage.as_ref().map(|u| u.seven_day.utilization),
@@ -1013,6 +1015,16 @@ pub async fn session_load() -> Result<Option<String>, String> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Debug: JS → Rust logging bridge
+// ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn log_from_js(message: String) -> Result<(), String> {
+    log::warn!("[JS] {}", message);
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
@@ -1123,119 +1135,128 @@ mod ghostty_commands {
         }
     }
 
+    // ghostty 명령: 동기적으로 main thread에서 직접 실행
+    // run_on_main_thread + await는 데드락을 유발하므로 사용하지 않음
+
     #[tauri::command]
     pub async fn ghostty_create(
         window: tauri::Window,
         state: State<'_, AppState>,
         pane_id: String,
-        config: Option<HashMap<String, String>>,
+        config: Option<serde_json::Value>,
     ) -> Result<(), String> {
+        log::info!("ghostty_create called for pane={}", pane_id);
+
+        // Phase 1: get ns_window on current thread (may not be main)
         let ns_window = get_ns_window(&window)?;
-        state.ghostty_manager.create(&pane_id, ns_window, config)
+        log::info!("ghostty_create: got ns_window for pane={}", pane_id);
+
+        let config_map = config.and_then(|v| {
+            v.as_object().map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| {
+                        let val = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            _ => return None,
+                        };
+                        Some((k.clone(), val))
+                    })
+                    .collect::<HashMap<String, String>>()
+            })
+        });
+
+        // Fire-and-forget on main thread — do NOT await
+        // Awaiting deadlocks because main thread is blocked by WKWebView event loop
+        let mgr = state.ghostty_manager.clone();
+        let ns_window_usize = ns_window as usize;
+        let pid = pane_id.clone();
+
+        window.run_on_main_thread(move || {
+            log::info!("ghostty_create: on main thread for pane={}", pid);
+            match mgr.create(&pid, ns_window_usize as *mut std::ffi::c_void, config_map) {
+                Ok(()) => log::info!("ghostty_create: OK pane={}", pid),
+                Err(e) => log::error!("ghostty_create: FAIL pane={}: {}", pid, e),
+            }
+        }).map_err(|e| format!("dispatch failed: {}", e))?;
+
+        Ok(()) // return immediately
     }
 
+    // ghostty FFI는 macOS main thread에서만 안전 (Metal/Cocoa는 main 큐 어서션).
+    // 기존엔 ghostty_create만 run_on_main_thread로 감쌌는데, 나머지 커맨드도
+    // tokio 워커에서 ghostty FFI를 직접 부르면서 libdispatch assertion으로 즉사했다.
+    // 모두 fire-and-forget으로 main에 dispatch한다 (await는 WKWebView 데드락 유발).
+
     #[tauri::command]
-    pub async fn ghostty_destroy(
-        state: State<'_, AppState>,
-        pane_id: String,
-    ) -> Result<(), String> {
-        state.ghostty_manager.destroy(&pane_id);
-        Ok(())
+    pub async fn ghostty_destroy(window: tauri::Window, state: State<'_, AppState>, pane_id: String) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.destroy(&pane_id); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
     pub async fn ghostty_set_frame(
-        state: State<'_, AppState>,
-        pane_id: String,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
+        window: tauri::Window,
+        state: State<'_, AppState>, pane_id: String,
+        x: f64, y: f64, width: f64, height: f64,
     ) -> Result<(), String> {
-        state.ghostty_manager.set_frame(&pane_id, x, y, width, height);
-        Ok(())
+        log::info!("ghostty_set_frame: pane={} {}x{} at ({},{})", pane_id, width, height, x, y);
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.set_frame(&pane_id, x, y, width, height); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_set_visible(
-        state: State<'_, AppState>,
-        pane_id: String,
-        visible: bool,
-    ) -> Result<(), String> {
-        state.ghostty_manager.set_visible(&pane_id, visible);
-        Ok(())
+    pub async fn ghostty_set_visible(window: tauri::Window, state: State<'_, AppState>, pane_id: String, visible: bool) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.set_visible(&pane_id, visible); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_focus(
-        state: State<'_, AppState>,
-        pane_id: String,
-    ) -> Result<(), String> {
-        state.ghostty_manager.focus(&pane_id);
-        Ok(())
+    pub async fn ghostty_focus(window: tauri::Window, state: State<'_, AppState>, pane_id: String) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.focus(&pane_id); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_apply_theme(
-        state: State<'_, AppState>,
-        pane_id: String,
-        theme: HashMap<String, String>,
-    ) -> Result<(), String> {
-        state.ghostty_manager.apply_theme(&pane_id, theme);
-        Ok(())
+    pub async fn ghostty_apply_theme(window: tauri::Window, state: State<'_, AppState>, pane_id: String, theme: HashMap<String, String>) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.apply_theme(&pane_id, theme); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_search(
-        state: State<'_, AppState>,
-        pane_id: String,
-        query: String,
-        direction: Option<String>,
-    ) -> Result<(), String> {
-        let dir = direction.as_deref().unwrap_or("next");
-        state.ghostty_manager.search(&pane_id, &query, dir);
-        Ok(())
+    pub async fn ghostty_search(window: tauri::Window, state: State<'_, AppState>, pane_id: String, query: String, direction: Option<String>) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        let dir = direction.unwrap_or_else(|| "next".to_string());
+        window.run_on_main_thread(move || { mgr.search(&pane_id, &query, &dir); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_search_clear(
-        state: State<'_, AppState>,
-        pane_id: String,
-    ) -> Result<(), String> {
-        state.ghostty_manager.search_clear(&pane_id);
-        Ok(())
+    pub async fn ghostty_search_clear(window: tauri::Window, state: State<'_, AppState>, pane_id: String) -> Result<(), String> {
+        let mgr = state.ghostty_manager.clone();
+        window.run_on_main_thread(move || { mgr.search_clear(&pane_id); })
+            .map_err(|e| format!("dispatch failed: {}", e))
     }
 
     #[tauri::command]
-    pub async fn ghostty_get_selection(
-        state: State<'_, AppState>,
-        pane_id: String,
-    ) -> Result<String, String> {
-        state
-            .ghostty_manager
-            .get_selection(&pane_id)
-            .ok_or_else(|| "no selection".to_string())
+    pub async fn ghostty_get_selection(state: State<'_, AppState>, pane_id: String) -> Result<String, String> {
+        state.ghostty_manager.get_selection(&pane_id).ok_or_else(|| "no selection".to_string())
     }
 
     #[tauri::command]
-    pub async fn ghostty_get_buffer_text(
-        state: State<'_, AppState>,
-        pane_id: String,
-        max_lines: Option<usize>,
-    ) -> Result<Vec<String>, String> {
-        let lines = max_lines.unwrap_or(1000);
-        Ok(state.ghostty_manager.get_buffer_text(&pane_id, lines))
+    pub async fn ghostty_get_buffer_text(state: State<'_, AppState>, pane_id: String, max_lines: Option<usize>) -> Result<Vec<String>, String> {
+        Ok(state.ghostty_manager.get_buffer_text(&pane_id, max_lines.unwrap_or(1000)))
     }
 
     #[tauri::command]
-    pub async fn ghostty_copy(
-        state: State<'_, AppState>,
-        pane_id: String,
-    ) -> Result<String, String> {
-        state
-            .ghostty_manager
-            .copy(&pane_id)
-            .ok_or_else(|| "no selection to copy".to_string())
+    pub async fn ghostty_copy(state: State<'_, AppState>, pane_id: String) -> Result<String, String> {
+        state.ghostty_manager.copy(&pane_id).ok_or_else(|| "no selection to copy".to_string())
     }
 
     #[tauri::command]
@@ -1252,3 +1273,250 @@ mod ghostty_commands {
 // Re-export ghostty commands on macOS
 #[cfg(target_os = "macos")]
 pub use ghostty_commands::*;
+
+// ────────────────────────────────────────────────────────────────────────
+// alacritty_terminal 기반 네이티브 터미널 명령
+// 모두 main thread에서 실행되어야 함 (NSView/CoreGraphics).
+// ────────────────────────────────────────────────────────────────────────
+#[cfg(target_os = "macos")]
+mod alac_commands {
+    use super::*;
+    use crate::alac;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use std::ffi::c_void;
+
+    fn get_ns_window(window: &tauri::Window) -> Result<*mut c_void, String> {
+        use objc2::msg_send;
+        use objc2_app_kit::NSView;
+        use raw_window_handle::HasWindowHandle;
+        let handle = window
+            .window_handle()
+            .map_err(|e| format!("failed to get window handle: {}", e))?;
+        match handle.as_raw() {
+            raw_window_handle::RawWindowHandle::AppKit(appkit) => {
+                let ns_view_ptr = appkit.ns_view.as_ptr() as *mut NSView;
+                unsafe {
+                    let ns_window: *mut c_void = msg_send![&*ns_view_ptr, window];
+                    if ns_window.is_null() {
+                        Err("NSView has no window".into())
+                    } else {
+                        Ok(ns_window)
+                    }
+                }
+            }
+            _ => Err("not AppKit window handle".into()),
+        }
+    }
+
+    #[tauri::command]
+    pub async fn alac_create(
+        window: tauri::Window,
+        state: State<'_, AppState>,
+        pane_id: String,
+        cwd: Option<String>,
+    ) -> Result<(), String> {
+        log::info!("alac_create called for pane={}", pane_id);
+        let ns_window = get_ns_window(&window)?;
+        let ns_window_us = ns_window as usize;
+
+        let mgr = state.alac_manager.clone();
+        let pid = pane_id.clone();
+        let pid_for_view = pane_id.clone();
+
+        // 셀 크기 측정/뷰 생성은 main 스레드에서 먼저 수행 → 결과로 cols/rows 알려줌.
+        // 그 다음 manager.create로 PTY+Term 시작.
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(u16, u16, u16, u16), String>>();
+        let cwd_clone = cwd.clone();
+        window
+            .run_on_main_thread(move || unsafe {
+                // 임시 frame; 실제 크기는 set_frame에서 잡음.
+                let frame = NSRect {
+                    origin: NSPoint { x: 0.0, y: 0.0 },
+                    size: NSSize { width: 800.0, height: 600.0 },
+                };
+                let view = alac::view::create_view(
+                    &pid_for_view,
+                    ns_window_us as *mut c_void,
+                    frame,
+                );
+                if view.is_null() {
+                    let _ = tx.send(Err("create_view returned null".into()));
+                    return;
+                }
+                let size = alac::view::current_size(&pid_for_view).unwrap_or((80, 24, 8, 16));
+                let _ = tx.send(Ok(size));
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+
+        let (cols, rows, cell_w, cell_h) = rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|e| format!("create_view timeout: {}", e))??;
+
+        // PTY + Term 인스턴스화 (background OK).
+        let working_directory = cwd_clone.map(std::path::PathBuf::from);
+        let opts = alac::CreateOptions {
+            cols,
+            rows,
+            cell_width: cell_w,
+            cell_height: cell_h,
+            working_directory,
+            shell_program: None,
+            shell_args: vec![],
+            window_id: 0,
+        };
+        mgr.create(&pid, opts)?;
+        log::info!("alac_create OK pane={} {}x{}", pid, cols, rows);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn alac_destroy(
+        window: tauri::Window,
+        state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<(), String> {
+        // 1) PTY/EventLoop 종료
+        state.alac_manager.destroy(&pane_id);
+        // 2) NSView 제거 (main thread)
+        let pid = pane_id.clone();
+        window
+            .run_on_main_thread(move || unsafe {
+                alac::view::destroy_view(&pid);
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn alac_set_frame(
+        window: tauri::Window,
+        _state: State<'_, AppState>,
+        pane_id: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> Result<(), String> {
+        let pid = pane_id.clone();
+        window
+            .run_on_main_thread(move || unsafe {
+                let rect = NSRect {
+                    origin: NSPoint { x, y },
+                    size: NSSize { width, height },
+                };
+                alac::view::set_frame(&pid, rect);
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn alac_focus(
+        window: tauri::Window,
+        _state: State<'_, AppState>,
+        pane_id: String,
+    ) -> Result<(), String> {
+        let pid = pane_id.clone();
+        window
+            .run_on_main_thread(move || unsafe {
+                alac::view::focus(&pid);
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn alac_set_visible(
+        window: tauri::Window,
+        _state: State<'_, AppState>,
+        pane_id: String,
+        visible: bool,
+    ) -> Result<(), String> {
+        let pid = pane_id.clone();
+        window
+            .run_on_main_thread(move || unsafe {
+                alac::view::set_visible(&pid, visible);
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+        Ok(())
+    }
+
+    /// React 측 모달이 열리거나 닫힐 때 호출.
+    /// 모달이 열려있는 동안 모든 alac NSView는 강제로 hidden 처리.
+    #[tauri::command]
+    pub async fn alac_set_modal_open(
+        window: tauri::Window,
+        _state: State<'_, AppState>,
+        open: bool,
+    ) -> Result<(), String> {
+        window
+            .run_on_main_thread(move || {
+                alac::view::set_modal_open(open);
+            })
+            .map_err(|e| format!("dispatch failed: {}", e))?;
+        Ok(())
+    }
+
+    /// 외부(InputBox 등)에서 alac PTY로 직접 입력 바이트 전송.
+    /// xterm 모드의 window.api.pty.write 와 같은 역할 — alac은 자체 PTY를 가지므로 별도 명령.
+    #[tauri::command]
+    pub async fn alac_write(
+        window: tauri::Window,
+        state: State<'_, AppState>,
+        pane_id: String,
+        data: String,
+    ) -> Result<(), String> {
+        log::info!(
+            "alac_write pane={} len={} preview={:?}",
+            pane_id,
+            data.len(),
+            data.chars().take(40).collect::<String>()
+        );
+        state.alac_manager.write_input(&pane_id, data.into_bytes());
+
+        // 진단: 200ms 후 Term grid 상태 캡처 — shell echo가 들어왔는지 확인.
+        let mgr = state.alac_manager.clone();
+        let pid_diag = pane_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = mgr.with_term(&pid_diag, |term| {
+                use alacritty_terminal::grid::Dimensions as _;
+                let content = term.renderable_content();
+                let cursor = content.cursor.point;
+                let cols = term.columns();
+                let lines = term.screen_lines();
+                // 마지막 row 30 columns
+                let mut row_text = String::new();
+                let cursor_row = cursor.line.0;
+                for col in 0..cols.min(60) {
+                    let cell_iter = term
+                        .renderable_content()
+                        .display_iter
+                        .filter(|c| c.point.line.0 == cursor_row && c.point.column.0 == col)
+                        .next();
+                    if let Some(cell) = cell_iter {
+                        row_text.push(if cell.c == '\0' { ' ' } else { cell.c });
+                    }
+                }
+                log::info!(
+                    "alac diag pane={} cursor=({},{}) {}x{} row={:?}",
+                    pid_diag,
+                    cursor.line.0,
+                    cursor.column.0,
+                    cols,
+                    lines,
+                    row_text
+                );
+            });
+        });
+
+        let pid = pane_id.clone();
+        let _ = window.run_on_main_thread(move || {
+            alac::view::nudge_visible(&pid);
+        });
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use alac_commands::*;

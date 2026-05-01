@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSettingsStore, useThemeStore } from '@renderer/stores';
+import { useModalStore } from '@renderer/stores/modal';
 import { themeList } from '@shared/themes';
 import type { CursorStyle } from '@shared/types';
 import type { ThemeId } from '@shared/themes';
@@ -36,6 +37,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       loadFromConfig();
     }
   }, [isOpen, loadFromConfig]);
+
+  // 모달이 열려있는 동안 alac NSView가 가리지 않도록 글로벌 modal store 등록.
+  useEffect(() => {
+    if (!isOpen) return;
+    useModalStore.getState().open();
+    return () => useModalStore.getState().close();
+  }, [isOpen]);
 
   // ESC 키로 닫기
   useEffect(() => {

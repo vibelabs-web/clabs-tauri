@@ -10,6 +10,10 @@ export interface UsageData {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   messageCount?: number;
+  /** 마지막 API 응답에서 추출된 model id (예: "claude-opus-4-7", "claude-sonnet-4-5"). */
+  model?: string | null;
+  /** 1M context 모드 여부 — Sonnet/Opus 4의 200K 초과분 가산가격 적용. */
+  isLongContext?: boolean;
   // Anthropic API 사용량 (5시간/7일)
   fiveHourUsage?: number | null;
   fiveHourReset?: string | null;

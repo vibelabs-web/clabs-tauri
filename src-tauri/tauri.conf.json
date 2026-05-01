@@ -41,7 +41,8 @@
     ],
     "resources": [
       "../resources/skillpack/**/*",
-      "../resources/mcp-servers/**/*"
+      "../resources/mcp-servers/**/*",
+      "vendor/ghostty/lib/Ghostty.metallib"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"

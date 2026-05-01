@@ -137,72 +137,89 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         });
         terminal.loadAddon(webLinksAddon);
 
-        terminal.open(container);
-
         // ─── WKWebView 한글 IME 픽스 ───
-        // WKWebView는 compositionstart/end 대신 input(insertReplacementText)으로 한글 조합을 처리한다.
-        // xterm의 kc=229 처리는 attachCustomKeyEventHandler에서 return false로 차단.
-        //
-        // 각 키입력마다 WKWebView가 보내는 이벤트 시퀀스:
-        //   A) 조합 중:  insertReplacementText(새글자) → insertText(새글자, 중복)
-        //   B) 음절경계: insertText(확정글자, commit) → insertReplacementText(새자모) → insertText(중복)
-        //   C) 스페이스: insertText(확정글자, commit) 후 xterm이 ' ' 전송
-        //
-        // justHandledReplacement 플래그로 중복 insertText와 commit insertText를 구분.
-        // ta.value 는 건드리지 않음 — WKWebView IME가 내부 composition 상태 추적에 사용하므로
-        // 초기화하면 IME가 리셋되어 이후 글자가 사라지는 버그 발생.
-        {
+        // 문제: xterm은 input 이벤트를 capture phase로 등록(Terminal.ts:382)하여
+        //   _inputEvent()에서 한글 insertText를 triggerDataEvent로 보낸다.
+        //   attachCustomKeyEventHandler(kc=229 차단)으로는 이 경로를 막을 수 없다.
+        // 해결: terminal.open() 전에 container에 capture phase listener를 등록하여
+        //   한글 input 이벤트에 stopImmediatePropagation → xterm이 절대 보지 못함.
+        //   textarea.value를 직접 추적하여 조합 완료 시에만 PTY 전송.
+        const ime = { active: false, flushedLen: 0, preInputLen: 0 };
+
+        const isKoreanChar = (s: string) => !!s && [...s].some(c => {
+          const cp = c.codePointAt(0)!;
+          return (cp >= 0x3131 && cp <= 0x3163) || (cp >= 0xAC00 && cp <= 0xD7A3);
+        });
+
+        // ① keydown capture — open() 전에 등록
+        container.addEventListener('keydown', (e: KeyboardEvent) => {
           const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-          if (ta && onData) {
-            let sent = '';           // 현재 PTY에 보낸 조합 텍스트
-            let justHandledReplacement = false;
+          if (!ta) return;
 
-            const isKorean = (s: string) => !!s && [...s].some(c => {
-              const cp = c.codePointAt(0)!;
-              return (cp >= 0x3131 && cp <= 0x3163) || (cp >= 0xAC00 && cp <= 0xD7A3);
-            });
-
-            ta.addEventListener('keydown', (e: KeyboardEvent) => {
-              if (e.keyCode !== 229) {
-                justHandledReplacement = false;
-                // Enter/Escape/Ctrl+C는 조합을 완전히 종료 → sent 초기화
-                // Space는 초기화하지 않음 — WKWebView가 commit insertText를 보내줌
-                if (e.key === 'Enter' || e.key === 'Escape' || (e.ctrlKey && e.key === 'c')) {
-                  sent = '';
-                }
-              }
-            });
-
-            ta.addEventListener('input', (e: Event) => {
-              const ie = e as InputEvent;
-              const data = ie.data || '';
-              if (!isKorean(data)) return;
-
-              if (ie.inputType === 'insertReplacementText') {
-                // 이전 조합 글자를 PTY에서 지우기
-                if (sent) {
-                  onData('\x7f'.repeat([...sent].length));
-                }
-                sent = data;
-                onData(data);
-                justHandledReplacement = true;
-              } else if (ie.inputType === 'insertText') {
-                if (justHandledReplacement) {
-                  // insertReplacementText 직후의 중복 insertText → 무시
-                  justHandledReplacement = false;
-                } else if (!sent) {
-                  // 첫 자모 (insertReplacementText 없이 온 경우)
-                  sent = data;
-                  onData(data);
-                } else {
-                  // insertText without prior insertReplacementText = 음절 확정(commit) 이벤트
-                  // PTY에 이미 해당 글자가 있으므로 재전송하지 않음, sent만 초기화
-                  sent = '';
-                }
-              }
-            });
+          if (e.keyCode === 229) {
+            // IME 키: 현재 textarea 길이를 기록 (input 전 baseline)
+            if (!ime.active) {
+              ime.preInputLen = ta.value.length;
+            }
+          } else if (ime.active && onData) {
+            // 비-IME 키: 조합 완료 → textarea에서 미전송 한글을 PTY 전송
+            const pending = ta.value.slice(ime.flushedLen);
+            if (pending && isKoreanChar(pending)) {
+              onData(pending);
+            }
+            ime.flushedLen = ta.value.length;
+            ime.active = false;
+            const cv = container.querySelector('.composition-view') as HTMLElement | null;
+            if (cv) {
+              cv.textContent = '';
+              cv.classList.remove('active');
+            }
           }
-        }
+        }, true);
+
+        // ② input capture — open() 전에 등록 → xterm보다 먼저 실행
+        container.addEventListener('input', (e: Event) => {
+          const ie = e as InputEvent;
+          const data = ie.data || '';
+          if (!isKoreanChar(data)) {
+            // 비-한글 input → baseline 업데이트
+            setTimeout(() => {
+              const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+              if (ta) ime.flushedLen = ta.value.length;
+            }, 0);
+            return; // xterm에 위임
+          }
+
+          // 한글 → xterm의 _inputEvent가 보지 못하게 완전 차단
+          e.stopImmediatePropagation();
+
+          if (!ime.active) {
+            // 첫 한글 입력: keydown에서 기록한 preInputLen을 baseline으로
+            ime.flushedLen = ime.preInputLen;
+            ime.active = true;
+          }
+
+          // 미리보기: setTimeout으로 textarea.value 확정 후 읽기
+          setTimeout(() => {
+            const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+            const cv = container.querySelector('.composition-view') as HTMLElement | null;
+            if (!ta || !cv) return;
+            const pending = ta.value.slice(ime.flushedLen);
+            if (pending && isKoreanChar(pending)) {
+              cv.textContent = pending;
+              cv.classList.add('active');
+              // 터미널 폰트와 동일하게 설정
+              cv.style.fontFamily = 'JetBrains Mono, Menlo, Monaco, monospace';
+              cv.style.fontSize = '13px';
+              cv.style.lineHeight = (13 * 1.4) + 'px';
+              cv.style.height = (13 * 1.4) + 'px';
+              cv.style.left = ta.style.left;
+              cv.style.top = ta.style.top;
+            }
+          }, 0);
+        }, true);
+
+        terminal.open(container);
 
         // ImageAddon (Sixel/iTerm2 이미지 프로토콜 지원)
         try {
@@ -317,8 +334,7 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         // ─── 키보드 핸들러 ───
         terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
           // 한글 IME 키(kc=229)를 xterm이 처리하지 못하도록 차단
-          // _handleAnyTextareaChanges → triggerDataEvent 경로를 막아 이중 전송 방지
-          // 실제 한글 처리는 아래 input 이벤트 리스너에서 담당
+          // → _handleAnyTextareaChanges 경로 차단, 한글은 위 input 리스너에서 처리
           if (event.keyCode === 229 && event.type === 'keydown') {
             return false;
           }
@@ -372,9 +388,15 @@ export function TerminalView({ paneId = 'pane-default', onData, onReady, onSugge
         });
 
         // ─── 사용자 입력 (비-한글) ───
+        // xterm의 _inputEvent()가 insertText 한글을 triggerDataEvent로 보내므로
+        // onData에서 한글을 필터링 — 한글은 위 커스텀 IME 핸들러에서만 처리
         if (onData) {
+          const hasKorean = (s: string) => [...s].some(c => {
+            const cp = c.codePointAt(0)!;
+            return (cp >= 0x3131 && cp <= 0x3163) || (cp >= 0xAC00 && cp <= 0xD7A3);
+          });
           terminal.onData((data) => {
-            if (!disposedRef.current) onData(data);
+            if (!disposedRef.current && !hasKorean(data)) onData(data);
           });
         }
 

@@ -16,6 +16,7 @@ protocol SplitPaneDelegate: AnyObject {
 final class SplitPaneView: NSView {
 
     weak var delegate: SplitPaneDelegate?
+    weak var paneToolbarDelegate: PaneToolbarDelegate?
 
     private(set) var rootNode: PaneNode
     private var splitViewControllers: [String: ManagedSplitViewController] = [:]
@@ -50,11 +51,24 @@ final class SplitPaneView: NSView {
             let termView = delegate.splitPane(self, createViewForPane: leaf.id)
             termView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(termView)
+
+            // Add PaneToolbar at top-right of each pane
+            let toolbar = PaneToolbar(frame: .zero)
+            toolbar.translatesAutoresizingMaskIntoConstraints = false
+            toolbar.paneId = leaf.id
+            toolbar.delegate = paneToolbarDelegate
+            container.addSubview(toolbar)
+
             NSLayoutConstraint.activate([
                 termView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 termView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                 termView.topAnchor.constraint(equalTo: container.topAnchor),
                 termView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+                toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+                toolbar.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+                toolbar.widthAnchor.constraint(equalToConstant: PaneToolbar.preferredWidth),
+                toolbar.heightAnchor.constraint(equalToConstant: PaneToolbar.height),
             ])
 
         case .split(let split):
@@ -118,7 +132,7 @@ final class ManagedSplitViewController: NSObject, NSSplitViewDelegate {
         self.initialRatio = split.ratio
 
         let sv = NSSplitView(frame: .zero)
-        sv.isVertical = split.direction == .horizontal // horizontal split = vertical divider
+        sv.isVertical = split.direction == .vertical // vertical split = 좌우, horizontal split = 상하
         sv.dividerStyle = .thin
         sv.autoresizingMask = [.width, .height]
 

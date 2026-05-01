@@ -3,16 +3,11 @@
 // @TASK P3B-THEME - Theme color mapping (TerminalTheme -> Ghostty config)
 // @SPEC docs/spike-phase2-ghostty-manager.md
 
+// bindgen 자동 생성 FFI (수동 ffi.rs 대체)
+#[path = "ffi_generated.rs"]
 pub mod ffi;
 pub mod manager;
 pub mod native_view;
 pub mod theme;
-
-// Re-export key types for convenience
-pub use ffi::{
-    ghostty_app_t, ghostty_config_t, ghostty_surface_t,
-    ghostty_surface_config_s, ghostty_runtime_config_s,
-    ghostty_platform_e, ghostty_color_scheme_e,
-};
 
 pub use manager::GhosttyManager;

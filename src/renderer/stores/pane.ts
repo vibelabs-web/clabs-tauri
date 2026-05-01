@@ -1,6 +1,7 @@
 // Zustand 패인 스토어 - 이진 트리 기반 스플릿 패인 상태 관리
 
 import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
 import type {
   PaneNode,
   PaneLeaf,
@@ -80,6 +81,10 @@ export const usePaneStore = create<PaneStore>()((set, get) => ({
 
     const parent = findParent(root, paneId);
     if (!parent) return;
+
+    // 네이티브 alac 인스턴스 정리 (PTY + NSView).
+    // unmount/remount(분할 등)에서는 안 부르고, 진짜 페인이 사라질 때만 호출.
+    invoke('alac_destroy', { paneId }).catch(() => {});
 
     // 형제 노드 (닫히는 패인의 반대쪽)
     const sibling = parent.first.id === paneId ? parent.second : parent.first;

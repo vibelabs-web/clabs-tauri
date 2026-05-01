@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useMemo, useCallback, KeyboardEvent, CompositionEvent, ChangeEvent } from 'react';
 import { BUILTIN_COMMANDS } from '@shared/claude-cli';
 import type { CommandHistoryEntry } from '@shared/claude-cli';
+import { useModalStore } from '@renderer/stores/modal';
 
 // ─────────────────────────────────────────────────────────────
 // 드롭다운 아이템 타입 (통합)
@@ -142,6 +143,9 @@ export function InputBox({
     textareaRef.current?.focus();
   }, [onChange, closeDropdown]);
 
+  // 확장 입력 모달이 떠있는 동안 글로벌 modal store에 등록 — alac NSView가 모달 가리지 않게.
+  // 동일 hook 호출은 useEffect 안 import 시점에 함. 우선 plain useEffect로 처리.
+
   const handleCompositionStart = () => { isComposingRef.current = true; };
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     isComposingRef.current = false;
@@ -150,9 +154,9 @@ export function InputBox({
   };
 
   const handleChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
-    // IME 조합 중에는 부모 state 업데이트를 건너뛴다
-    // React controlled input이 조합 중 textarea.value를 리셋하여 한글이 깨지는 것 방지
-    if (isComposingRef.current) return;
+    // IME 조합 중이라도 textarea의 native value 그대로 부모 state로 sync.
+    // (이전엔 조합 중 onChange를 skip했지만 compositionend가 어떤 이유로 발생 안 하면
+    //  isComposingRef가 true로 굳어 영구 입력 불가 → 입력 자체가 안 되는 증상)
     onChange(e.target.value);
   };
 
@@ -363,6 +367,13 @@ export function InputBox({
   const [showExpandModal, setShowExpandModal] = useState(false);
   const [expandedValue, setExpandedValue] = useState('');
   const expandTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 확장 모달이 열려있는 동안 alac NSView가 가리지 않도록 글로벌 modal store에 등록.
+  useEffect(() => {
+    if (!showExpandModal) return;
+    useModalStore.getState().open();
+    return () => useModalStore.getState().close();
+  }, [showExpandModal]);
 
   const handleOpenExpand = useCallback(() => {
     setExpandedValue(value);

@@ -424,8 +424,8 @@ final class InputBox: NSView {
         }
 
         CommandHistory.shared.add(raw)
-        sendToTerminal(raw)
-        sendEnterKey()
+        // Send text + \r together (ghostty forwards to PTY)
+        sendToTerminal(raw + "\r")
         textField.stringValue = ""
         ghostText = ""
         closeDropdown()
@@ -466,26 +466,23 @@ final class InputBox: NSView {
     }
 
     private func sendEnterKey() {
+        sendToTerminal("\r\n")
+    }
+
+    private func sendEnterSafe() {
         guard let manager = ghosttyManager else { return }
         let surface = manager.surface(for: activePaneId) ?? manager.firstSurface()
         guard let surface else { return }
 
-        // Send Enter as a key event (keycode 36 = Return on macOS)
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_PRESS
-        keyEvent.keycode = 36 // Return key
-        keyEvent.mods = GHOSTTY_MODS_NONE
-        keyEvent.text = nil
-        keyEvent.composing = false
-        "\r".withCString { ptr in
-            keyEvent.text = ptr
-            _ = ghostty_surface_key(surface, keyEvent)
-        }
-
-        // Release
-        keyEvent.action = GHOSTTY_ACTION_RELEASE
-        keyEvent.text = nil
-        _ = ghostty_surface_key(surface, keyEvent)
+        let ptr = UnsafeMutablePointer<ghostty_input_key_s>.allocate(capacity: 1)
+        defer { ptr.deallocate() }
+        memset(ptr, 0, MemoryLayout<ghostty_input_key_s>.size)
+        ptr.pointee.action = GHOSTTY_ACTION_PRESS
+        ptr.pointee.keycode = 36
+        ptr.pointee.mods = GHOSTTY_MODS_NONE
+        ptr.pointee.consumed_mods = GHOSTTY_MODS_NONE
+        ptr.pointee.text = nil
+        _ = ghostty_surface_key(surface, ptr.pointee)
     }
 }
 

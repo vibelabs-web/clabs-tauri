@@ -1,9 +1,8 @@
 // PaneView - 리프 패인 래퍼 (PaneHeader + EditorTabBar + TerminalView/FilePreviewView)
 // absolute positioning으로 TerminalView 크기 확보
 //
-// Feature flag: localStorage.setItem('clabs.useNativeTerminal', 'true')
-// → NativeTerminalView (ghostty NSView 오버레이) 활성화
-// → localStorage.removeItem('clabs.useNativeTerminal') 으로 xterm 모드 복귀
+// 기본: ghostty (네이티브 터미널)
+// xterm 폴백: localStorage.setItem('clabs.useXterm', 'true') 후 새로고침
 
 import { useCallback } from 'react';
 import type { PaneLeaf } from '@shared/pane-types';
@@ -11,10 +10,10 @@ import { PaneHeader } from './PaneHeader';
 import { EditorTabBar } from './EditorTabBar';
 import { TerminalView } from './TerminalView';
 import { NativeTerminalView } from './NativeTerminalView';
+import { AlacTerminalView } from './AlacTerminalView';
 import { FilePreviewView } from './FilePreviewView';
 
-// 런타임에 한 번 평가 (리렌더마다 재평가 불필요)
-const USE_NATIVE_TERMINAL = localStorage.getItem('clabs.useNativeTerminal') === 'true';
+import { TERM_BACKEND } from '@renderer/utils/term-backend';
 
 export interface PaneViewProps {
   pane: PaneLeaf;
@@ -119,7 +118,14 @@ export function PaneView({
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
           display: isTerminalActive ? 'block' : 'none',
         }}>
-          {USE_NATIVE_TERMINAL ? (
+          {TERM_BACKEND === 'alac' ? (
+            <AlacTerminalView
+              key={`alac-${pane.id}`}
+              paneId={pane.id}
+              cwd={projectPath}
+              onReady={() => onPaneReady(pane.id)}
+            />
+          ) : TERM_BACKEND === 'ghostty' ? (
             <NativeTerminalView
               key={`native-${pane.id}`}
               paneId={pane.id}

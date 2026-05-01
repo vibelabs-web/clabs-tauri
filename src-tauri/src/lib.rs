@@ -13,6 +13,9 @@ mod usage_api;
 #[cfg(target_os = "macos")]
 pub mod ghostty;
 
+#[cfg(target_os = "macos")]
+pub mod alac;
+
 use commands::{load_command_history, load_projects, CommandHistoryEntry};
 use file_watcher::FileWatcherManager;
 use orchestrator::OrchestratorServer;
@@ -23,6 +26,7 @@ use stores::config::ConfigStore;
 use stores::license::LicenseStore;
 use stores::usage::UsageStore;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -45,7 +49,10 @@ pub struct AppState {
     pub pane_names: Mutex<HashMap<String, String>>,
     /// Ghostty native terminal manager (macOS only)
     #[cfg(target_os = "macos")]
-    pub ghostty_manager: ghostty::GhosttyManager,
+    pub ghostty_manager: Arc<ghostty::GhosttyManager>,
+    /// alacritty_terminal 기반 네이티브 터미널 매니저 (macOS only)
+    #[cfg(target_os = "macos")]
+    pub alac_manager: Arc<alac::AlacManager>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -118,8 +125,19 @@ pub fn run() {
                 slack_bridge: Mutex::new(slack_bridge),
                 pane_names: Mutex::new(HashMap::new()),
                 #[cfg(target_os = "macos")]
-                ghostty_manager: ghostty::GhosttyManager::new(),
+                ghostty_manager: Arc::new(ghostty::GhosttyManager::new()),
+                #[cfg(target_os = "macos")]
+                alac_manager: Arc::new(alac::AlacManager::new()),
             };
+
+            // ghostty_init — skip for now, called lazily in manager.create()
+            // Direct call here was causing SIGSEGV in ghostty_config_new
+            #[cfg(target_os = "macos")]
+            {
+                log::info!("ghostty: init deferred to first create()");
+                // alac view 모듈에 manager 등록 — Class 메서드에서 룩업.
+                alac::view::set_manager(state.alac_manager.clone());
+            }
 
             app.manage(state);
 
@@ -219,6 +237,7 @@ pub fn run() {
             // Session Persistence
             commands::session_save,
             commands::session_load,
+            commands::log_from_js,
             // Ghostty Native Terminal (macOS)
             #[cfg(target_os = "macos")]
             commands::ghostty_create,
@@ -244,6 +263,21 @@ pub fn run() {
             commands::ghostty_copy,
             #[cfg(target_os = "macos")]
             commands::ghostty_paste,
+            // alacritty_terminal 기반 네이티브 터미널
+            #[cfg(target_os = "macos")]
+            commands::alac_create,
+            #[cfg(target_os = "macos")]
+            commands::alac_destroy,
+            #[cfg(target_os = "macos")]
+            commands::alac_set_frame,
+            #[cfg(target_os = "macos")]
+            commands::alac_focus,
+            #[cfg(target_os = "macos")]
+            commands::alac_set_visible,
+            #[cfg(target_os = "macos")]
+            commands::alac_set_modal_open,
+            #[cfg(target_os = "macos")]
+            commands::alac_write,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

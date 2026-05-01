@@ -24,6 +24,8 @@ pub struct GhosttyInstance {
     pub view: *mut c_void,
     /// Raw pointer to the NSWindow (borrowed, not owned)
     pub ns_window: *mut c_void,
+    /// GCD dispatch timer for ghostty_app_tick (main thread)
+    pub tick_timer: *mut c_void,
 }
 
 // SAFETY: GhosttyInstance contains raw pointers to Objective-C objects and
@@ -95,13 +97,46 @@ unsafe extern "C" fn close_surface_callback(_userdata: *mut c_void, _process_ali
 
 pub struct GhosttyManager {
     instances: Mutex<HashMap<String, GhosttyInstance>>,
+    initialized: Mutex<bool>,
 }
 
 impl GhosttyManager {
     pub fn new() -> Self {
         Self {
             instances: Mutex::new(HashMap::new()),
+            initialized: Mutex::new(false),
         }
+    }
+
+    fn ensure_init(&self) -> Result<(), String> {
+        let mut init = self.initialized.lock().unwrap();
+        if !*init {
+            log::info!("ghostty: calling ghostty_init...");
+            unsafe {
+                let args: Vec<std::ffi::CString> = std::env::args()
+                    .map(|a| std::ffi::CString::new(a).unwrap_or_else(|_| std::ffi::CString::new("").unwrap()))
+                    .collect();
+                let mut argv: Vec<*mut std::os::raw::c_char> = args.iter()
+                    .map(|a| a.as_ptr() as *mut std::os::raw::c_char)
+                    .collect();
+                let ret = ghostty_init(argv.len(), argv.as_mut_ptr());
+                log::info!("ghostty_init returned: {}", ret);
+                if ret != 0 {
+                    return Err(format!("ghostty_init failed: {}", ret));
+                }
+
+                // Smoke test: try config_new immediately after init
+                log::info!("ghostty: smoke test ghostty_config_new...");
+                let test_config = ghostty_config_new();
+                if test_config.is_null() {
+                    return Err("ghostty_config_new returned null in smoke test".to_string());
+                }
+                ghostty_config_free(test_config);
+                log::info!("ghostty: smoke test passed");
+            }
+            *init = true;
+        }
+        Ok(())
     }
 
     /// Create a new ghostty terminal surface for the given pane.
@@ -115,7 +150,8 @@ impl GhosttyManager {
         ns_window: *mut c_void,
         config_overrides: Option<HashMap<String, String>>,
     ) -> Result<(), String> {
-        native_view::assert_main_thread();
+        log::info!("ghostty::create called for pane={}", pane_id);
+        self.ensure_init()?;
 
         let mut instances = self.instances.lock().map_err(|e| e.to_string())?;
 
@@ -175,8 +211,9 @@ impl GhosttyManager {
                 return Err("ghostty_app_new returned null".to_string());
             }
 
-            // 4. Create NSView with CAMetalLayer
+            // 4. Create NSView with CAMetalLayer (starts hidden — shown on first set_frame)
             let view = native_view::create_ghostty_view(ns_window, 0.0, 0.0, 400.0, 300.0);
+            native_view::set_view_visible(view, false);
             if view.is_null() {
                 ghostty_app_free(app);
                 ghostty_config_free(config);
@@ -185,19 +222,30 @@ impl GhosttyManager {
 
             // 5. Surface config — pass the NSView as the platform handle
             let mut surface_config = ghostty_surface_config_new();
-            surface_config.platform_tag = ghostty_platform_e::GHOSTTY_PLATFORM_MACOS;
+            surface_config.platform_tag = ghostty_platform_e_GHOSTTY_PLATFORM_MACOS;
             surface_config.platform =
                 ghostty_platform_u {
-                    macos: std::mem::ManuallyDrop::new(ghostty_platform_macos_s {
+                    macos: ghostty_platform_macos_s {
                         nsview: view,
-                    }),
+                    },
                 };
             surface_config.scale_factor = 2.0; // Retina default
             surface_config.font_size = 0.0; // Use config default
-            surface_config.context = ghostty_surface_context_e::GHOSTTY_SURFACE_CONTEXT_WINDOW;
+            surface_config.context = ghostty_surface_context_e_GHOSTTY_SURFACE_CONTEXT_WINDOW;
+
+            // Set working directory to user home (or config override)
+            let cwd = config_overrides
+                .as_ref()
+                .and_then(|o| o.get("cwd").cloned())
+                .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+            let cwd_c = CString::new(cwd).unwrap();
+            surface_config.working_directory = cwd_c.as_ptr();
 
             // 6. Surface
             let surface = ghostty_surface_new(app, &surface_config);
+            // CString must live until after surface_new returns
+            drop(cwd_c);
+
             if surface.is_null() {
                 native_view::remove_view(view);
                 ghostty_app_free(app);
@@ -205,7 +253,15 @@ impl GhosttyManager {
                 return Err("ghostty_surface_new returned null".to_string());
             }
 
+            // Store surface/app pointers in NSView ivars for keyboard event forwarding
+            native_view::set_surface_on_view(view, surface, app);
+
             log::info!("ghostty: instance created for pane={}", pane_id);
+
+            // 7. Start tick timer on MAIN THREAD via GCD dispatch
+            // ghostty_app_tick must run on main thread (Metal/AppKit)
+            let tick_timer = native_view::start_main_thread_tick(app);
+            log::info!("ghostty: tick timer started for pane={}", pane_id);
 
             instances.insert(
                 pane_id.to_string(),
@@ -215,6 +271,7 @@ impl GhosttyManager {
                     config,
                     view,
                     ns_window,
+                    tick_timer,
                 },
             );
         }
@@ -237,6 +294,7 @@ impl GhosttyManager {
         if let Some(instance) = instances.remove(pane_id) {
             log::info!("ghostty: destroying instance for pane={}", pane_id);
             unsafe {
+                native_view::stop_tick_timer(instance.tick_timer);
                 ghostty_surface_free(instance.surface);
                 ghostty_app_free(instance.app);
                 ghostty_config_free(instance.config);
@@ -259,6 +317,8 @@ impl GhosttyManager {
         if let Some(instance) = instances.get(pane_id) {
             unsafe {
                 native_view::set_view_frame(instance.view, instance.ns_window, x, y, width, height);
+                // Show the view on first frame update (starts hidden to not block dialogs)
+                native_view::set_view_visible(instance.view, true);
 
                 // Also notify ghostty of the new size in pixels
                 ghostty_surface_set_size(

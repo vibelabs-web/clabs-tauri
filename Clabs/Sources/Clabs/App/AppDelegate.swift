@@ -51,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        NSApp.appearance = NSAppearance(named: .darkAqua)
 
         let argc = CommandLine.argc
         let argv = CommandLine.unsafeArgv
@@ -299,6 +300,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let splitView = SplitPaneView(frame: contentArea.bounds, rootNode: tab.rootPane)
         splitView.autoresizingMask = [.width, .height]
         splitView.delegate = self
+        splitView.paneToolbarDelegate = self
         splitView.build() // must be called AFTER delegate is set
         currentSplitView = splitView
 
@@ -349,6 +351,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tv.manager = ghosttyManager
         tv.paneId = paneId
         tv.workingDirectory = workingDirectory
+        tv.onClosePane = { [weak self] id in
+            self?.closePane(id: id)
+        }
+        tv.onBecameActive = { [weak self] id in
+            self?.inputBoxView?.activePaneId = id
+        }
         termViews[paneId] = tv
         NSLog("[AppDelegate] installed termView for pane \(paneId), wd=\(workingDirectory)")
     }
@@ -358,6 +366,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tv.removeFromSuperview()
         }
         ghosttyManager.destroySurface(paneId: paneId)
+    }
+
+    private func closePane(id: String) {
+        guard let tab = tabs.first(where: { $0.id == activeTabId }) else { return }
+        // If this is the only pane, close the tab instead
+        if tab.allLeafIds.count <= 1 {
+            closeTab(id: tab.id)
+            return
+        }
+        // Remove from model
+        tab.removePane(id: id)
+        removeTermView(paneId: id)
+        // Rebuild split view
+        switchToTab(id: tab.id)
+        NSLog("[AppDelegate] closed pane %@", id)
     }
 
     // MARK: - Tab Bar Updates
@@ -665,6 +688,22 @@ extension AppDelegate: SplitPaneDelegate {
             updateRatio(in: &s.second, splitId: splitId, ratio: ratio)
             node = .split(s)
         }
+    }
+}
+
+// MARK: - PaneToolbarDelegate
+
+extension AppDelegate: PaneToolbarDelegate {
+    func paneToolbar(_ toolbar: PaneToolbar, didRequestSplit direction: SplitDirection, forPane paneId: String) {
+        guard let tab = tabs.first(where: { $0.id == activeTabId }) else { return }
+        guard let newLeaf = tab.split(paneId: paneId, direction: direction) else { return }
+        installTermView(paneId: newLeaf.id, workingDirectory: tab.projectPath)
+        switchToTab(id: tab.id)
+        NSLog("[AppDelegate] toolbar split %@ → %@", paneId, newLeaf.id)
+    }
+
+    func paneToolbar(_ toolbar: PaneToolbar, didRequestClose paneId: String) {
+        closePane(id: paneId)
     }
 }
 

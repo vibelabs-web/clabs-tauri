@@ -44,6 +44,12 @@ tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "NSThread"] }
-objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSColor", "NSResponder"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "NSThread", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3", features = ["NSView", "NSWindow", "NSColor", "NSResponder", "NSGraphics", "NSEvent", "NSFont", "NSTextInputClient"] }
 objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
+
+# alacritty_terminal 기반 네이티브 터미널 (Phase 6)
+alacritty_terminal = "0.26"
+core-graphics = "0.25"
+core-text = "21"
+core-foundation = "0.10"

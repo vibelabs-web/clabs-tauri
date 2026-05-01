@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { CLI_FLAGS, CLI_FLAG_CATEGORIES } from '@shared/claude-cli';
 import type { CLIFlag } from '@shared/claude-cli';
+import { useModalStore } from '@renderer/stores/modal';
 
 interface CommandBuilderProps {
   isOpen: boolean;
@@ -67,6 +68,13 @@ export default function CommandBuilder({ isOpen, onClose, onExecute }: CommandBu
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
+
+  // 모달이 열려있는 동안 alac NSView를 일시 hide.
+  useEffect(() => {
+    if (!isOpen) return;
+    useModalStore.getState().open();
+    return () => useModalStore.getState().close();
+  }, [isOpen]);
 
   // 카테고리별 그룹화
   const grouped = useMemo(() => {

@@ -11,6 +11,7 @@ import { useWorkspaceStore } from '../stores/workspace';
 import { useTimelineStore } from '../stores/timeline';
 import { useDiffStore } from '../stores/diff';
 import { extractAllTurns } from '../utils/terminal-registry';
+import { TERM_BACKEND, writeToPty } from '../utils/term-backend';
 import type { UsageData } from '../types/usage';
 import { stripAnsi } from '../utils/ansi';
 import type { SplitDirection } from '@shared/pane-types';
@@ -160,14 +161,12 @@ export default function MainPage() {
     }
   }, [isPtyRunning]);
 
-  // 세션 복원 (앱 시작 시) - 탭이 없을 때만
+  // 시작 시 항상 프로젝트 선택 모달부터.
+  // (이전: restoreSession이 디스크에 저장된 모든 탭을 자동 복원해서 사용자 의도와 무관하게
+  //  여러 탭이 생성되었음 — alac NSView가 비활성 탭에서도 떠서 사이드바를 침범하는 원인.)
   useEffect(() => {
     if (tabs.length === 0) {
-      restoreSession().then((restored) => {
-        if (!restored) {
-          openProjectSelector();
-        }
-      });
+      openProjectSelector();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -328,17 +327,19 @@ export default function MainPage() {
     }
   }, [markPaneSpawned, unmarkPaneSpawned]);
 
-  // 터미널 데이터 핸들러 (xterm → 활성 패인 PTY, 브로드캐스트 모드 지원)
+  // 터미널 데이터 핸들러 (활성 패인 PTY, 브로드캐스트 모드 지원).
+  // 백엔드(alac/ghostty/xterm)에 따라 적절한 IPC 채널로 라우팅.
   const handleData = useCallback((data: string) => {
-    if (!window.api?.pty || !isPtyRunningRef.current || !activeTab) return;
+    if (!activeTab) return;
+    const isAlac = TERM_BACKEND === 'alac';
+    if (!isAlac && (!window.api?.pty || !isPtyRunningRef.current)) return;
 
     if (broadcastMode) {
-      // 브로드캐스트: 모든 spawned 패인에 동시 전송
       for (const paneId of activeTab.spawnedPaneIds) {
-        window.api.pty.write(data, paneId);
+        writeToPty(paneId, data);
       }
     } else {
-      window.api.pty.write(data, activeTab.activePaneId);
+      writeToPty(activeTab.activePaneId, data);
     }
   }, [activeTab, broadcastMode]);
 
@@ -384,12 +385,13 @@ export default function MainPage() {
     resizeSplitInTab(activeTab.id, splitId, newRatio);
   }, [activeTab, resizeSplitInTab]);
 
-  // 입력 제출 핸들러
+  // 입력 제출 핸들러 (백엔드에 따라 alac/portable_pty로 라우팅)
   const handleSubmit = useCallback(async (text: string) => {
     const tab = useWorkspaceStore.getState().getActiveTab();
     if (!tab) return;
 
-    if (!window.api?.pty || !isPtyRunning) return;
+    const isAlac = TERM_BACKEND === 'alac';
+    if (!isAlac && (!window.api?.pty || !isPtyRunning)) return;
 
     if (writeCooldownRef.current) {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -405,9 +407,9 @@ export default function MainPage() {
       responseBufferRef.current = [];
       writeAbortRef.current = false;
 
-      window.api.pty.write(cleanText, tab.activePaneId);
+      writeToPty(tab.activePaneId, cleanText);
       await new Promise(resolve => setTimeout(resolve, 50));
-      await window.api.pty.write('\r', tab.activePaneId);
+      writeToPty(tab.activePaneId, '\r');
 
       console.log(`[handleSubmit] sent to pane ${tab.activePaneId}:`, cleanText);
     } catch (error) {
@@ -551,7 +553,7 @@ export default function MainPage() {
         usage={usage}
         projectName={activeTab?.project.name || '프로젝트 없음'}
         projectPath={activeTab?.project.path}
-        disabled={!isPtyRunning || showProjectSelector}
+        disabled={(TERM_BACKEND !== 'alac' && !isPtyRunning) || showProjectSelector}
         inputValue={inputValue}
         suggestion={suggestion}
         lastResponse={lastResponse}

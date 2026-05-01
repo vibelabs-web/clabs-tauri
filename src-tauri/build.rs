@@ -24,9 +24,10 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=IOSurface");
         println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
 
-        // C/C++ standard libraries
+        // C/C++ standard libraries + GCD
         println!("cargo:rustc-link-lib=c");
         println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-lib=framework=System"); // libdispatch (GCD)
 
         // Rerun if vendor library changes
         println!("cargo:rerun-if-changed=vendor/ghostty/lib/libghostty.a");

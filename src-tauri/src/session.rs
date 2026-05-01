@@ -20,6 +20,13 @@ pub struct SessionUsage {
     pub total_tokens: u64,
     #[serde(rename = "messageCount")]
     pub message_count: u64,
+    /// 마지막으로 본 model 이름 (예: "claude-opus-4-7", "claude-sonnet-4-5").
+    /// 정확한 가격 계산을 위해 사용.
+    #[serde(rename = "model")]
+    pub model: Option<String>,
+    /// 1M context 모드 여부 — Opus/Sonnet 1M 가산 가격 적용.
+    #[serde(rename = "isLongContext")]
+    pub is_long_context: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +40,9 @@ pub struct UsageUpdateData {
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
     pub message_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub is_long_context: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub five_hour_usage: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +113,8 @@ impl SessionWatcher {
                             cache_read_tokens: new_usage.cache_read_tokens,
                             cache_creation_tokens: new_usage.cache_creation_tokens,
                             message_count: new_usage.message_count,
+                            model: new_usage.model.clone(),
+                            is_long_context: new_usage.is_long_context,
                             five_hour_usage: None,
                             five_hour_reset: None,
                             seven_day_usage: None,
@@ -201,6 +213,8 @@ fn parse_session_file(path: &Path) -> SessionUsage {
     let mut latest_cache_create = 0u64;
     let mut total_output = 0u64;
     let mut message_count = 0u64;
+    let mut latest_model: Option<String> = None;
+    let mut is_long_context = false;
 
     for line in content.lines() {
         let line = line.trim();
@@ -209,6 +223,15 @@ fn parse_session_file(path: &Path) -> SessionUsage {
         }
 
         if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+            // 마지막 assistant message의 model을 우선 채택.
+            if let Some(model_name) = entry
+                .get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(|m| m.as_str())
+            {
+                latest_model = Some(model_name.to_string());
+            }
+
             if let Some(u) = entry
                 .get("message")
                 .and_then(|m| m.get("usage"))
@@ -235,12 +258,20 @@ fn parse_session_file(path: &Path) -> SessionUsage {
         }
     }
 
+    // 1M 컨텍스트 모드 휴리스틱: 단일 input + cache_read 합계가 200K를 초과하면 long context.
+    // (Anthropic의 Sonnet/Opus 4 1M 모드는 200K 초과 시 가산 가격 적용.)
+    if latest_input + latest_cache_read > 200_000 {
+        is_long_context = true;
+    }
+
     usage.input_tokens = latest_input;
     usage.cache_read_tokens = latest_cache_read;
     usage.cache_creation_tokens = latest_cache_create;
     usage.total_tokens = latest_input + latest_cache_read + latest_cache_create;
     usage.output_tokens = total_output;
     usage.message_count = message_count;
+    usage.model = latest_model;
+    usage.is_long_context = is_long_context;
 
     usage
 }

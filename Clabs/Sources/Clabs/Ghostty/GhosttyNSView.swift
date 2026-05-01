@@ -88,11 +88,16 @@ class GhosttyNSView: NSView, NSTextInputClient {
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
 
+    /// Called when this pane becomes focused
+    var onBecameActive: ((String) -> Void)?
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        NSLog("[GhosttyNSView] becomeFirstResponder: %d surface=%d", result ? 1 : 0, surface != nil ? 1 : 0)
         if let surface {
             ghostty_surface_set_focus(surface, true)
+        }
+        if result {
+            onBecameActive?(paneId)
         }
         return result
     }
@@ -154,54 +159,58 @@ class GhosttyNSView: NSView, NSTextInputClient {
             return
         }
 
-        // Track whether insertText was called
+        // Handle special keys BEFORE interpretKeyEvents
+        // ghostty_surface_key crashes with PAC issues, so send escape sequences via text
+        let specialSeq: String? = {
+            switch event.keyCode {
+            case 36, 76: return "\r"         // Return/Enter → CR
+            case 51: return "\u{7f}"         // Backspace → DEL
+            case 53: return "\u{1b}"         // Escape
+            case 48: return "\t"             // Tab
+            case 123: return "\u{1b}[D"      // Left
+            case 124: return "\u{1b}[C"      // Right
+            case 125: return "\u{1b}[B"      // Down
+            case 126: return "\u{1b}[A"      // Up
+            case 115: return "\u{1b}[H"      // Home
+            case 119: return "\u{1b}[F"      // End
+            case 116: return "\u{1b}[5~"     // PageUp
+            case 121: return "\u{1b}[6~"     // PageDown
+            case 117: return "\u{1b}[3~"     // Delete
+            default: return nil
+            }
+        }()
+
+        if let seq = specialSeq {
+            // Send via ghostty_surface_text — ghostty forwards to PTY
+            seq.withCString { ptr in
+                ghostty_surface_text(surface, ptr, UInt(seq.utf8.count))
+            }
+            return
+        }
+
+        // Normal text keys: use interpretKeyEvents for IME
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
-
         interpretKeyEvents([event])
 
-        let textInserted = keyTextAccumulator?.isEmpty == false
-
-        if !textInserted && !hasMarkedText() {
-            // No text produced (backspace, arrows, enter, escape, ctrl+key, etc.)
-            // Send raw key event to ghostty
-            var keyEvent = ghostty_input_key_s()
-            keyEvent.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-            keyEvent.keycode = UInt32(event.keyCode)
-            keyEvent.mods = modsFromEvent(event)
-            keyEvent.composing = false
-            keyEvent.text = nil
-            if let chars = event.charactersIgnoringModifiers, let scalar = chars.unicodeScalars.first {
-                keyEvent.unshifted_codepoint = scalar.value
+        if let acc = keyTextAccumulator, !acc.isEmpty {
+            // insertText was called — text already sent via ghostty_surface_text
+        } else if !hasMarkedText() {
+            // No text, no marked text, not a special key — send characters directly
+            if let chars = event.characters, !chars.isEmpty {
+                chars.withCString { ptr in
+                    ghostty_surface_text(surface, ptr, UInt(chars.utf8.count))
+                }
             }
-            _ = ghostty_surface_key(surface, keyEvent)
         }
-        // If textInserted: insertText already called ghostty_surface_text
-        // If hasMarkedText: setMarkedText already called ghostty_surface_preedit
     }
 
     override func keyUp(with event: NSEvent) {
-        guard let surface else { return }
-
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_RELEASE
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.mods = modsFromEvent(event)
-        keyEvent.text = nil
-        keyEvent.composing = false
-        _ = ghostty_surface_key(surface, keyEvent)
+        // No-op: ghostty_surface_key crashes, text-only mode
     }
 
     override func flagsChanged(with event: NSEvent) {
-        guard let surface else { return }
-
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_PRESS
-        keyEvent.keycode = UInt32(event.keyCode)
-        keyEvent.mods = modsFromEvent(event)
-        keyEvent.text = nil
-        keyEvent.composing = false
-        _ = ghostty_surface_key(surface, keyEvent)
+        // No-op: modifier changes not needed for text-only mode
     }
 
     // MARK: - NSTextInputClient (IME)
@@ -226,7 +235,7 @@ class GhosttyNSView: NSView, NSTextInputClient {
         // Mark that text was inserted (for keyDown to know)
         keyTextAccumulator?.append(chars)
 
-        // Send text directly to ghostty — works for both IME and regular input
+        // Send completed text via ghostty_surface_text (safe, no crash)
         chars.withCString { ptr in
             ghostty_surface_text(surface, ptr, UInt(chars.utf8.count))
         }
@@ -329,8 +338,10 @@ class GhosttyNSView: NSView, NSTextInputClient {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        tryCreateSurface() // surface may not exist yet if split was just created
+        tryCreateSurface()
         guard let surface else { return }
+        // Prevent crash: don't send 0 size to ghostty
+        guard newSize.width > 1, newSize.height > 1 else { return }
         ghostty_surface_set_size(surface, UInt32(newSize.width), UInt32(newSize.height))
     }
 
@@ -363,6 +374,27 @@ class GhosttyNSView: NSView, NSTextInputClient {
         if flags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
         if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
         return ghostty_input_mods_e(rawValue: mods)
+    }
+
+    // MARK: - Safe ghostty_surface_key (heap-allocated struct)
+
+    private func sendKeyToSurface(_ surface: ghostty_surface_t, keyCode: UInt16, mods: ghostty_input_mods_e, isRepeat: Bool) {
+        // Allocate struct on heap via UnsafeMutablePointer to avoid PAC/stack issues
+        let ptr = UnsafeMutablePointer<ghostty_input_key_s>.allocate(capacity: 1)
+        defer { ptr.deallocate() }
+
+        // Zero-fill entire struct
+        memset(ptr, 0, MemoryLayout<ghostty_input_key_s>.size)
+
+        ptr.pointee.action = isRepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        ptr.pointee.keycode = UInt32(keyCode)
+        ptr.pointee.mods = mods
+        ptr.pointee.consumed_mods = GHOSTTY_MODS_NONE
+        ptr.pointee.unshifted_codepoint = 0
+        ptr.pointee.composing = false
+        ptr.pointee.text = nil
+
+        _ = ghostty_surface_key(surface, ptr.pointee)
     }
 
     // MARK: - Font Size
@@ -434,6 +466,12 @@ class GhosttyNSView: NSView, NSTextInputClient {
         fontReset.target = self
         menu.addItem(fontReset)
 
+        menu.addItem(.separator())
+
+        let closePane = NSMenuItem(title: "이 패인 닫기", action: #selector(menuClosePane), keyEquivalent: "")
+        closePane.target = self
+        menu.addItem(closePane)
+
         return menu
     }
 
@@ -461,16 +499,21 @@ class GhosttyNSView: NSView, NSTextInputClient {
         // Send Ctrl+A as a terminal select-all convention, or use ghostty binding
         // ghostty does not have a direct select-all API; send the key sequence
         guard let surface else { return }
-        var keyEvent = ghostty_input_key_s()
-        keyEvent.action = GHOSTTY_ACTION_PRESS
-        keyEvent.keycode = 0 // 'a'
-        keyEvent.mods = ghostty_input_mods_e(rawValue: GHOSTTY_MODS_CTRL.rawValue)
-        keyEvent.composing = false
-        keyEvent.text = nil
-        _ = ghostty_surface_key(surface, keyEvent)
+        // Send Ctrl+A as text
+        let ctrlA = "\u{01}" // ASCII SOH = Ctrl+A
+        ctrlA.withCString { ptr in
+            ghostty_surface_text(surface, ptr, 1)
+        }
     }
 
     @objc private func menuFontIncrease() { adjustFontSize(delta: 1) }
     @objc private func menuFontDecrease() { adjustFontSize(delta: -1) }
     @objc private func menuFontReset() { resetFontSize() }
+
+    /// Callback for closing this pane (set by AppDelegate)
+    var onClosePane: ((String) -> Void)?
+
+    @objc private func menuClosePane() {
+        onClosePane?(paneId)
+    }
 }

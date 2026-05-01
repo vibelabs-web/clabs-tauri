@@ -163,7 +163,7 @@ final class SidebarView: NSView {
         segmentControl = NSSegmentedControl(labels: ["Skills", "Files"], trackingMode: .selectOne, target: self, action: #selector(segmentChanged))
         segmentControl.selectedSegment = 0
         segmentControl.segmentStyle = .rounded
-        segmentControl.font = .systemFont(ofSize: 11, weight: .medium)
+        segmentControl.font = .systemFont(ofSize: 13, weight: .medium)
         segmentControl.frame = NSRect(x: 8, y: bounds.height - segmentHeight - 6, width: bounds.width - 16, height: segmentHeight)
         segmentControl.autoresizingMask = [.width, .minYMargin]
         addSubview(segmentControl)
@@ -457,7 +457,7 @@ final class SectionHeaderView: NSView {
         chevron.bezelStyle = .inline
         chevron.isBordered = false
         chevron.title = section.collapsed ? "›" : "⌄"
-        chevron.font = .systemFont(ofSize: 10, weight: .medium)
+        chevron.font = .systemFont(ofSize: 12, weight: .medium)
         chevron.contentTintColor = textSecondary.withAlphaComponent(0.6)
         chevron.target = self
         chevron.action = #selector(headerTapped)
@@ -466,7 +466,7 @@ final class SectionHeaderView: NSView {
         // Title — small uppercase, muted
         let shortTitle = sectionShortTitle(section.title)
         let titleLabel = NSTextField(labelWithString: shortTitle.uppercased())
-        titleLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = textSecondary.withAlphaComponent(0.6)
         titleLabel.frame = NSRect(x: 28, y: (headerH - 14) / 2, width: frame.width - 60, height: 14)
         headerRow.addSubview(titleLabel)
@@ -508,7 +508,7 @@ final class SectionHeaderView: NSView {
         }
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12, weight: .regular)
+        label.font = .systemFont(ofSize: 14, weight: .regular)
         label.textColor = textPrimary
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 36, y: (itemH - 15) / 2, width: width - 52, height: 15)

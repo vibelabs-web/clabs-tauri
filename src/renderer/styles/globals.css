@@ -141,11 +141,15 @@ pre {
   pointer-events: auto !important;
 }
 
-/* IME 조합 중 표시되는 xterm composition view */
+/* IME 조합 중 표시되는 xterm composition view — 터미널 폰트와 일치 */
 .xterm .composition-view {
   z-index: 11 !important;
-  background: var(--color-bg-secondary) !important;
+  background: transparent !important;
   color: var(--color-text-primary) !important;
+  font-family: 'JetBrains Mono', Menlo, Monaco, monospace !important;
+  font-size: 13px !important;
+  line-height: 18.2px !important;
+  white-space: nowrap !important;
 }
 
 /* ===== 컴포넌트 유틸리티 클래스 ===== */

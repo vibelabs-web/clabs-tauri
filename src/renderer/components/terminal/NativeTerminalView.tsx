@@ -100,11 +100,15 @@ export function NativeTerminalView({
   currentThemeRef.current = currentTheme;
 
   // ── 프레임 전송 (디바운스 150ms) ──────────────────────────
-  const sendFrame = useCallback(() => {
-    if (disposedRef.current || !containerRef.current) return;
+  // sendFrame은 getBoundingClientRect 가 0x0 이면 skip 하므로,
+  // 마운트 직후처럼 layout 이 아직 안 끝난 시점엔 NSView 가 hidden 상태로
+  // 머무는 문제가 있었다. 첫 호출이 실패하면 RAF 로 재시도해서
+  // 첫 유효 frame 을 보장한다.
+  const sendFrame = useCallback((): boolean => {
+    if (disposedRef.current || !containerRef.current) return false;
     const el = containerRef.current;
     const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.width === 0 || rect.height === 0) return false;
 
     invoke('ghostty_set_frame', {
       paneId,
@@ -113,7 +117,23 @@ export function NativeTerminalView({
       width: Math.round(rect.width),
       height: Math.round(rect.height),
     }).catch(() => {});
+    return true;
   }, [paneId]);
+
+  // 첫 frame 보장 — 0x0 이면 RAF/타이머로 재시도, 최대 ~2초
+  const ensureFirstFrame = useCallback(() => {
+    let attempts = 0;
+    const tick = () => {
+      if (disposedRef.current) return;
+      if (sendFrame()) return; // 성공
+      attempts++;
+      if (attempts < 40) {
+        // RAF 로 다음 frame 대기 (보통 layout 끝나면 즉시 잡힘)
+        requestAnimationFrame(tick);
+      }
+    };
+    tick();
+  }, [sendFrame]);
 
   const debouncedSendFrame = useCallback(() => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
@@ -127,32 +147,39 @@ export function NativeTerminalView({
 
     disposedRef.current = false;
 
-    // 1. ghostty_create
-    const themeColors = terminalThemeToGhostty(currentThemeRef.current.terminal);
-    const config: GhosttyConfig = {
+    console.log(`[NativeTerminalView ${paneId}] useEffect mounted`);
+    invoke('log_from_js', { message: `NativeTerminalView mounted: ${paneId}` }).catch(() => {});
+
+    // 1. 즉시 onReady 호출 — 앱 flow를 차단하지 않음 (프로젝트 선택 등)
+    if (onReady && !onReadyCalledRef.current) {
+      onReadyCalledRef.current = true;
+      console.log(`[NativeTerminalView ${paneId}] calling onReady`);
+      onReady();
+    }
+
+    // 2. ghostty_create — config를 flat string으로 전달 (nested object 회피)
+    const config: Record<string, string> = {
       fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
-      fontSize: 13,
-      theme: themeColors,
+      fontSize: '13',
     };
 
+    console.log(`[NativeTerminalView ${paneId}] calling ghostty_create...`);
     invoke('ghostty_create', { paneId, config })
       .then(() => {
         if (disposedRef.current) return;
         createdRef.current = true;
-
-        // 초기 프레임 전송
-        sendFrame();
-
-        if (onReady && !onReadyCalledRef.current) {
-          onReadyCalledRef.current = true;
-          onReady();
-        }
+        console.log(`[NativeTerminalView ${paneId}] ghostty_create succeeded`);
+        // 첫 frame 은 retry 로 보장 — 0x0 이면 layout 끝날 때까지 RAF
+        ensureFirstFrame();
+        invoke('ghostty_focus', { paneId }).catch(() => {});
       })
       .catch((err) => {
         console.error(`[NativeTerminalView ${paneId}] ghostty_create failed:`, err);
+        // 에러를 Rust 로그로도 전송
+        invoke('log_from_js', { message: `ghostty_create failed: ${err}` }).catch(() => {});
       });
 
-    // 2. ResizeObserver
+    // 3. ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
       if (disposedRef.current) return;
       const entry = entries[0];
