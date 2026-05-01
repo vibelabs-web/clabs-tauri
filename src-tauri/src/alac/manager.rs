@@ -35,6 +35,98 @@ impl AlacManager {
         }
     }
 
+    /// Term의 display scroll. `lines` > 0 은 위로(과거), < 0 은 아래로(현재).
+    pub fn scroll_display(&self, pane_id: &str, lines: i32) {
+        use alacritty_terminal::grid::Scroll;
+        if let Ok(map) = self.instances.lock() {
+            if let Some(inst) = map.get(pane_id) {
+                let mut term = inst.terminal.lock();
+                term.scroll_display(Scroll::Delta(lines));
+                inst.proxy
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    /// 클립보드 복사용 — 현재 selection 텍스트 추출.
+    pub fn selection_text(&self, pane_id: &str) -> Option<String> {
+        let map = self.instances.lock().ok()?;
+        let inst = map.get(pane_id)?;
+        let term = inst.terminal.lock();
+        term.selection.as_ref().and_then(|s| s.to_range(&*term)).map(|range| {
+            use alacritty_terminal::term::Term;
+            // 보일/안 보일/줄바꿈 처리는 alacritty가 알아서.
+            #[allow(deprecated)]
+            Term::bounds_to_string(&*term, range.start, range.end)
+        })
+    }
+
+    /// Selection 시작 (mouseDown). `point`는 viewport 기준 cell 좌표.
+    pub fn selection_start(
+        &self,
+        pane_id: &str,
+        point: alacritty_terminal::index::Point,
+        ty: alacritty_terminal::selection::SelectionType,
+    ) {
+        use alacritty_terminal::index::Side;
+        use alacritty_terminal::selection::Selection;
+        if let Ok(map) = self.instances.lock() {
+            if let Some(inst) = map.get(pane_id) {
+                let mut term = inst.terminal.lock();
+                let display_offset = term.grid().display_offset();
+                let abs_line = point.line.0 - display_offset as i32;
+                let abs_point = alacritty_terminal::index::Point {
+                    line: alacritty_terminal::index::Line(abs_line),
+                    column: point.column,
+                };
+                term.selection = Some(Selection::new(ty, abs_point, Side::Left));
+                inst.proxy
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    /// Selection 갱신 (mouseDragged).
+    pub fn selection_update(
+        &self,
+        pane_id: &str,
+        point: alacritty_terminal::index::Point,
+    ) {
+        use alacritty_terminal::index::Side;
+        if let Ok(map) = self.instances.lock() {
+            if let Some(inst) = map.get(pane_id) {
+                let mut term = inst.terminal.lock();
+                let display_offset = term.grid().display_offset();
+                let abs_line = point.line.0 - display_offset as i32;
+                let abs_point = alacritty_terminal::index::Point {
+                    line: alacritty_terminal::index::Line(abs_line),
+                    column: point.column,
+                };
+                if let Some(sel) = term.selection.as_mut() {
+                    sel.update(abs_point, Side::Right);
+                }
+                inst.proxy
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    /// Selection 해제.
+    pub fn selection_clear(&self, pane_id: &str) {
+        if let Ok(map) = self.instances.lock() {
+            if let Some(inst) = map.get(pane_id) {
+                let mut term = inst.terminal.lock();
+                term.selection = None;
+                inst.proxy
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
     pub fn write_input(&self, pane_id: &str, bytes: Vec<u8>) {
         if let Ok(map) = self.instances.lock() {
             if let Some(inst) = map.get(pane_id) {

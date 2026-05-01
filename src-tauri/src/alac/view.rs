@@ -175,6 +175,18 @@ fn register_class() {
                 sel!(mouseDown:),
                 mouse_down as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
+            builder.add_method(
+                sel!(mouseDragged:),
+                mouse_dragged as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            builder.add_method(
+                sel!(mouseUp:),
+                mouse_up as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            builder.add_method(
+                sel!(scrollWheel:),
+                scroll_wheel as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
             // inputContext — 안전망으로 명시 오버라이드. nil 반환되면 IME 라우팅 안 됨.
             builder.add_method(
                 sel!(inputContext),
@@ -297,13 +309,118 @@ unsafe extern "C" fn accepts_first_mouse(
 
 /// NSView가 가장 위에 떠있어서 click이 React로 가지 못함.
 /// 따라서 클릭 시점에 우리 NSView가 직접 firstResponder가 되어야 키 입력 라우팅이 정상.
-/// 추가로 active pane을 React에 동기화하기 위해 Tauri 이벤트도 emit.
-unsafe extern "C" fn mouse_down(self_: *mut AnyObject, _: Sel, _event: *mut AnyObject) {
+unsafe extern "C" fn mouse_down(self_: *mut AnyObject, _: Sel, event: *mut AnyObject) {
     let win: *mut AnyObject = msg_send![self_, window];
     if !win.is_null() {
         let _: () = msg_send![win, makeFirstResponder: self_];
     }
-    // React 측 active pane 동기화는 추후 — 일단 firstResponder만 잡아도 입력은 정상.
+    // 마우스 클릭 위치 → cell 좌표 → selection 시작.
+    let pane_id = match get_pane_id(self_) {
+        Some(p) => p,
+        None => return,
+    };
+    let mgr = match manager() {
+        Some(m) => m,
+        None => return,
+    };
+    let click_count: i64 = msg_send![event, clickCount];
+    if let Some(point) = event_to_cell_point(self_, event) {
+        use alacritty_terminal::selection::SelectionType;
+        let ty = match click_count {
+            2 => SelectionType::Semantic, // 단어 선택
+            3 => SelectionType::Lines,    // 줄 선택
+            _ => SelectionType::Simple,
+        };
+        mgr.selection_start(&pane_id, point, ty);
+        let _: () = msg_send![self_, setNeedsDisplay: Bool::YES];
+    }
+}
+
+unsafe extern "C" fn mouse_dragged(self_: *mut AnyObject, _: Sel, event: *mut AnyObject) {
+    let pane_id = match get_pane_id(self_) {
+        Some(p) => p,
+        None => return,
+    };
+    let mgr = match manager() {
+        Some(m) => m,
+        None => return,
+    };
+    if let Some(point) = event_to_cell_point(self_, event) {
+        mgr.selection_update(&pane_id, point);
+        let _: () = msg_send![self_, setNeedsDisplay: Bool::YES];
+    }
+}
+
+unsafe extern "C" fn mouse_up(_self: *mut AnyObject, _: Sel, _event: *mut AnyObject) {
+    // 드래그 끝 — selection 그대로 유지 (Cmd+C 또는 다음 클릭으로 해제).
+}
+
+/// 스크롤 휠/트랙패드 — alacritty Term의 display offset 조정.
+unsafe extern "C" fn scroll_wheel(self_: *mut AnyObject, _: Sel, event: *mut AnyObject) {
+    let pane_id = match get_pane_id(self_) {
+        Some(p) => p,
+        None => return,
+    };
+    let mgr = match manager() {
+        Some(m) => m,
+        None => return,
+    };
+    let cell_h = match get_cell_h(self_) {
+        Some(h) => h.max(1.0),
+        None => return,
+    };
+
+    let delta_y: f64 = msg_send![event, scrollingDeltaY];
+    let has_precise: Bool = msg_send![event, hasPreciseScrollingDeltas];
+
+    // precise: trackpad pixel 단위. cell_h px당 1 line.
+    // non-precise: 마우스 휠 line 단위. notch 1당 3 line 가속.
+    let lines = if has_precise.as_bool() {
+        (delta_y / cell_h).round() as i32
+    } else {
+        (delta_y * 3.0).round() as i32
+    };
+    if lines == 0 {
+        return;
+    }
+    mgr.scroll_display(&pane_id, lines);
+    let _: () = msg_send![self_, setNeedsDisplay: Bool::YES];
+}
+
+/// NSEvent의 locationInWindow → view-local 좌표 → cell (col, line).
+unsafe fn event_to_cell_point(
+    view: *mut AnyObject,
+    event: *mut AnyObject,
+) -> Option<alacritty_terminal::index::Point> {
+    let win_loc: NSPoint = msg_send![event, locationInWindow];
+    let view_loc: NSPoint = msg_send![
+        view,
+        convertPoint: win_loc,
+        fromView: std::ptr::null_mut::<AnyObject>()
+    ];
+    let (cell_w, cell_h) = match get_cell_size(view) {
+        Some(s) => s,
+        None => return None,
+    };
+    if cell_w < 1.0 || cell_h < 1.0 {
+        return None;
+    }
+    let col_f = (view_loc.x / cell_w).max(0.0);
+    let line_f = (view_loc.y / cell_h).max(0.0);
+    Some(alacritty_terminal::index::Point {
+        line: alacritty_terminal::index::Line(line_f as i32),
+        column: alacritty_terminal::index::Column(col_f as usize),
+    })
+}
+
+fn get_cell_h(view: *mut AnyObject) -> Option<f64> {
+    let map = VIEW_MAP.lock().ok()?;
+    map.get(&(view as usize)).map(|s| s.cell_h)
+}
+
+fn get_cell_size(view: *mut AnyObject) -> Option<(f64, f64)> {
+    let map = VIEW_MAP.lock().ok()?;
+    map.get(&(view as usize)).map(|s| (s.cell_w, s.cell_h))
 }
 
 /// NSResponder.inputContext 오버라이드.
@@ -400,7 +517,27 @@ unsafe extern "C" fn key_down(self_: *mut AnyObject, _: Sel, event: *mut AnyObje
     );
     let _ = has_marked;
 
-    // Ctrl/Cmd 조합은 IME 우회하고 직접 처리. (단, IME 조합 중이면 IME에 위임)
+    // Cmd+C: selection을 클립보드로 복사 (PTY로 ^C 안 보냄).
+    if has_cmd && !has_ctrl {
+        let chars: *mut AnyObject = msg_send![event, charactersIgnoringModifiers];
+        if !chars.is_null() {
+            let utf8: *const i8 = msg_send![chars, UTF8String];
+            if !utf8.is_null() {
+                let s = CStr::from_ptr(utf8).to_string_lossy().into_owned();
+                let c = s.chars().next().unwrap_or('\0').to_ascii_lowercase();
+                if c == 'c' {
+                    copy_selection_to_clipboard(self_);
+                    return;
+                }
+                if c == 'v' {
+                    paste_from_clipboard(self_);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Ctrl 조합은 IME 우회하고 직접 처리. (단, IME 조합 중이면 IME에 위임)
     if (has_ctrl || has_cmd) && get_marked_len(self_) == 0 {
         if let Some(bytes) = ctrl_cmd_keystroke(event, has_ctrl, has_cmd, has_opt) {
             log::info!("[alac]  → ctrl/cmd direct send: {:?}", bytes);
@@ -635,6 +772,50 @@ fn set_marked_str(view: *mut AnyObject, s: String) {
     }
 }
 
+unsafe fn copy_selection_to_clipboard(view: *mut AnyObject) {
+    let pane_id = match get_pane_id(view) {
+        Some(p) => p,
+        None => return,
+    };
+    let mgr = match manager() {
+        Some(m) => m,
+        None => return,
+    };
+    let text = match mgr.selection_text(&pane_id) {
+        Some(t) if !t.is_empty() => t,
+        _ => return,
+    };
+    log::info!("[alac] copy: {} chars", text.len());
+    // NSPasteboard 일반 복사.
+    let cls = AnyClass::get(c"NSPasteboard").unwrap();
+    let pasteboard: *mut AnyObject = msg_send![cls, generalPasteboard];
+    let _: () = msg_send![pasteboard, clearContents];
+    let nss: Retained<NSString> = NSString::from_str(&text);
+    let arr_cls = AnyClass::get(c"NSArray").unwrap();
+    let arr: *mut AnyObject = msg_send![arr_cls, arrayWithObject: &*nss];
+    let _: Bool = msg_send![pasteboard, writeObjects: arr];
+}
+
+unsafe fn paste_from_clipboard(view: *mut AnyObject) {
+    let cls = AnyClass::get(c"NSPasteboard").unwrap();
+    let pasteboard: *mut AnyObject = msg_send![cls, generalPasteboard];
+    let key_str: Retained<NSString> = NSString::from_str("public.utf8-plain-text");
+    let s: *mut AnyObject = msg_send![pasteboard, stringForType: &*key_str];
+    if s.is_null() {
+        return;
+    }
+    let utf8: *const i8 = msg_send![s, UTF8String];
+    if utf8.is_null() {
+        return;
+    }
+    let text = CStr::from_ptr(utf8).to_string_lossy().into_owned();
+    if text.is_empty() {
+        return;
+    }
+    log::info!("[alac] paste: {} chars", text.len());
+    send_bytes(view, text.into_bytes());
+}
+
 unsafe fn send_bytes(view: *mut AnyObject, bytes: Vec<u8>) {
     let pane_id = match get_pane_id(view) {
         Some(p) => p,
@@ -720,6 +901,8 @@ unsafe fn render_grid<T: alacritty_terminal::event::EventListener>(
     let cursor_point = content.cursor.point;
     let display_offset = content.display_offset as i32;
     let columns = term.columns();
+    // 현재 selection 범위 (viewport 기준).
+    let selection_range = term.selection.as_ref().and_then(|s| s.to_range(term));
 
     // NSAttributedString을 row마다 만들어 한 번에 그림 (셀별 drawAtPoint보다 훨씬 빠름).
     let cls_attr = AnyClass::get(c"NSMutableAttributedString").unwrap();
@@ -778,44 +961,129 @@ unsafe fn render_grid<T: alacritty_terminal::event::EventListener>(
     }
     let _ = cls_str;
 
-    // Cursor — IME 조합 중에는 글자가 보이도록 블록 대신 밑줄(언더바)로 그림.
+    // Selection 하이라이트 — 반투명 액센트 색으로 cell 영역 위에 덮어 그림.
+    if let Some(range) = selection_range {
+        let cls_bp = AnyClass::get(c"NSBezierPath").unwrap();
+        let sel_color: *mut AnyObject = msg_send![
+            cls_color,
+            colorWithSRGBRed: 0.40_f64, green: 0.55_f64, blue: 0.85_f64, alpha: 0.35_f64
+        ];
+        let _: () = msg_send![sel_color, setFill];
+        let start_line = range.start.line.0;
+        let end_line = range.end.line.0;
+        for line in start_line..=end_line {
+            let viewport_line = line + display_offset;
+            if viewport_line < 0 {
+                continue;
+            }
+            let (col_start, col_end_excl) = if range.is_block {
+                (range.start.column.0, range.end.column.0 + 1)
+            } else if line == start_line && line == end_line {
+                (range.start.column.0, range.end.column.0 + 1)
+            } else if line == start_line {
+                (range.start.column.0, columns)
+            } else if line == end_line {
+                (0, range.end.column.0 + 1)
+            } else {
+                (0, columns)
+            };
+            if col_end_excl <= col_start {
+                continue;
+            }
+            let y = viewport_line as f64 * cell_h;
+            let x = col_start as f64 * cell_w;
+            let w = (col_end_excl - col_start) as f64 * cell_w;
+            let rect = NSRect {
+                origin: NSPoint { x, y },
+                size: NSSize { width: w, height: cell_h },
+            };
+            let _: () = msg_send![cls_bp, fillRect: rect];
+        }
+    }
+
+    // Cursor — alacritty가 알려주는 shape에 따라 그림.
+    //   Block / HollowBlock → 사각형 (full / outline)
+    //   Underline → 밑줄
+    //   Beam → 왼쪽 세로선
+    //   Hidden → 안 그림
+    // IME 조합 중에는 marked 텍스트 폭만큼 강조 밑줄 + 깜박임 항상 ON.
+    use alacritty_terminal::vte::ansi::CursorShape;
+    let shape = content.cursor.shape;
     let cursor_x = cursor_point.column.0 as f64 * cell_w;
     let cursor_y = (cursor_point.line.0 + display_offset) as f64 * cell_h;
     let phase = current_blink_phase();
     let composing = !marked.is_empty();
     let cursor_color: *mut AnyObject = msg_send![
         cls_color,
-        colorWithSRGBRed: 0.90_f64, green: 0.90_f64, blue: 0.90_f64, alpha: 0.85_f64
+        colorWithSRGBRed: 0.90_f64, green: 0.90_f64, blue: 0.90_f64, alpha: 0.95_f64
     ];
     let cls_bp = AnyClass::get(c"NSBezierPath").unwrap();
 
+    let cursor_on = composing || phase == 0;
+
+    // IME 조합 중이면 항상 마킹 폭 밑줄. 그 외엔 shape 따라.
     if composing {
-        // IME 조합 중: 마킹 텍스트 전체 폭(글자 수 * cell_w 또는 wide면 더 넓음)에 밑줄.
-        // 마킹된 글자에 한글이 섞여 있으면 가시폭 추정이 까다로우니, char 수 기반으로 단순 계산하되
-        // 한글 같은 wide-char은 2-cell로 가정.
         let visual_cells: usize = marked
             .chars()
             .map(|c| if is_wide_char(c) { 2 } else { 1 })
-            .sum();
-        let underline_w = (visual_cells as f64).max(1.0) * cell_w;
+            .sum::<usize>()
+            .max(1);
         let underline_h = (cell_h * 0.10).max(2.0);
         let rect = NSRect {
             origin: NSPoint {
                 x: cursor_x,
                 y: cursor_y + cell_h - underline_h,
             },
-            size: NSSize { width: underline_w, height: underline_h },
+            size: NSSize {
+                width: visual_cells as f64 * cell_w,
+                height: underline_h,
+            },
         };
         let _: () = msg_send![cursor_color, setFill];
         let _: () = msg_send![cls_bp, fillRect: rect];
-    } else if phase == 0 {
-        // 일반 모드: 깜박임 페이즈 ON에서 블록 커서.
-        let rect = NSRect {
-            origin: NSPoint { x: cursor_x, y: cursor_y },
-            size: NSSize { width: cell_w, height: cell_h },
-        };
-        let _: () = msg_send![cursor_color, setFill];
-        let _: () = msg_send![cls_bp, fillRect: rect];
+    } else if cursor_on && shape != CursorShape::Hidden {
+        match shape {
+            CursorShape::Block => {
+                let rect = NSRect {
+                    origin: NSPoint { x: cursor_x, y: cursor_y },
+                    size: NSSize { width: cell_w, height: cell_h },
+                };
+                let _: () = msg_send![cursor_color, setFill];
+                let _: () = msg_send![cls_bp, fillRect: rect];
+            }
+            CursorShape::HollowBlock => {
+                let rect = NSRect {
+                    origin: NSPoint { x: cursor_x, y: cursor_y },
+                    size: NSSize { width: cell_w, height: cell_h },
+                };
+                let _: () = msg_send![cursor_color, setStroke];
+                let path: *mut AnyObject = msg_send![cls_bp, bezierPathWithRect: rect];
+                let _: () = msg_send![path, setLineWidth: 1.0_f64];
+                let _: () = msg_send![path, stroke];
+            }
+            CursorShape::Underline => {
+                let underline_h = (cell_h * 0.10).max(2.0);
+                let rect = NSRect {
+                    origin: NSPoint {
+                        x: cursor_x,
+                        y: cursor_y + cell_h - underline_h,
+                    },
+                    size: NSSize { width: cell_w, height: underline_h },
+                };
+                let _: () = msg_send![cursor_color, setFill];
+                let _: () = msg_send![cls_bp, fillRect: rect];
+            }
+            CursorShape::Beam => {
+                let beam_w = 2.0_f64;
+                let rect = NSRect {
+                    origin: NSPoint { x: cursor_x, y: cursor_y },
+                    size: NSSize { width: beam_w, height: cell_h },
+                };
+                let _: () = msg_send![cursor_color, setFill];
+                let _: () = msg_send![cls_bp, fillRect: rect];
+            }
+            _ => {}
+        }
     }
 
     // Marked text (IME 조합 중) — 커서 위치에 노란색으로
@@ -1055,34 +1323,71 @@ fn indexed_color(idx: u8) -> (f64, f64, f64) {
     }
 }
 
+/// IME 조합 중인 텍스트를 cell 격자에 맞춰 한 글자씩 그림.
+/// 한 글자가 wide-char(한글/한자 등)이면 2-cell 폭, 그 외엔 1-cell.
 unsafe fn draw_marked_text(
     text: &str,
-    x: f64,
+    base_x: f64,
     y: f64,
     cell_h: f64,
     font: &Retained<AnyObject>,
 ) {
-    let nss: Retained<NSString> = NSString::from_str(text);
+    let _ = cell_h;
     let cls_color = AnyClass::get(c"NSColor").unwrap();
-    let yellow: *mut AnyObject = msg_send![
-        cls_color,
-        colorWithSRGBRed: 0.95_f64, green: 0.85_f64, blue: 0.30_f64, alpha: 1.0_f64
-    ];
     let dict_cls = AnyClass::get(c"NSMutableDictionary").unwrap();
-    let dict: *mut AnyObject = msg_send![dict_cls, dictionary];
+
+    // 마킹 글자 색 — 액센트(밝은 시안)로 통일.
+    let fg: *mut AnyObject = msg_send![
+        cls_color,
+        colorWithSRGBRed: 0.55_f64, green: 0.90_f64, blue: 1.00_f64, alpha: 1.0_f64
+    ];
+    // 마킹 텍스트 영역 배경 — 어두운 강조
+    let bg_emph: *mut AnyObject = msg_send![
+        cls_color,
+        colorWithSRGBRed: 0.15_f64, green: 0.20_f64, blue: 0.30_f64, alpha: 1.0_f64
+    ];
+
     let key_font: Retained<NSString> = NSString::from_str("NSFont");
     let key_fg: Retained<NSString> = NSString::from_str("NSColor");
-    let key_under: Retained<NSString> = NSString::from_str("NSUnderline");
-    let _: () = msg_send![dict, setObject: &**font, forKey: &*key_font];
-    let _: () = msg_send![dict, setObject: yellow, forKey: &*key_fg];
-    // 밑줄 1
-    let cls_num = AnyClass::get(c"NSNumber").unwrap();
-    let one: *mut AnyObject = msg_send![cls_num, numberWithInt: 1_i32];
-    let _: () = msg_send![dict, setObject: one, forKey: &*key_under];
 
-    let _ = cell_h;
-    let pt = NSPoint { x, y };
-    let _: () = msg_send![&*nss, drawAtPoint: pt, withAttributes: dict];
+    // 셀별 폭(cell_w) 계산을 위해 view-state cell_w가 필요하지만 이 함수는 cell_w 인자가 없음.
+    // 호출 측에서 polly넘기게 — 임시로 'M' boundingRect로 추정.
+    // (정밀: 호출 측에서 cell_w 전달이 더 좋음. 추후 시그니처 변경.)
+    let probe = NSString::from_str("M");
+    let probe_dict_cls = AnyClass::get(c"NSDictionary").unwrap();
+    let probe_dict: *mut AnyObject = msg_send![
+        probe_dict_cls,
+        dictionaryWithObject: &**font, forKey: &*key_font
+    ];
+    let probe_size: NSSize = msg_send![&*probe, sizeWithAttributes: probe_dict];
+    let cell_w = probe_size.width.max(1.0);
+
+    let cls_bp = AnyClass::get(c"NSBezierPath").unwrap();
+
+    let mut x = base_x;
+    for c in text.chars() {
+        let cell_count = if is_wide_char(c) { 2 } else { 1 };
+        let w = cell_count as f64 * cell_w;
+
+        // 강조 배경 (cell 격자 사각형)
+        let bg_rect = NSRect {
+            origin: NSPoint { x, y },
+            size: NSSize { width: w, height: cell_h },
+        };
+        let _: () = msg_send![bg_emph, setFill];
+        let _: () = msg_send![cls_bp, fillRect: bg_rect];
+
+        // 글자
+        let s = c.to_string();
+        let nss: Retained<NSString> = NSString::from_str(&s);
+        let dict: *mut AnyObject = msg_send![dict_cls, dictionary];
+        let _: () = msg_send![dict, setObject: &**font, forKey: &*key_font];
+        let _: () = msg_send![dict, setObject: fg, forKey: &*key_fg];
+        let pt = NSPoint { x, y };
+        let _: () = msg_send![&*nss, drawAtPoint: pt, withAttributes: dict];
+
+        x += w;
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
