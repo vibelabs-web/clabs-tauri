@@ -16,3 +16,7 @@ src-tauri/vendor/ghostty/lib/*.a
 src-tauri/vendor/ghostty/lib/*.metallib
 src-tauri/vendor/ghostty/lib/*.dylib
 Clabs/.build/
+
+# Claude Code 런타임 산출물
+.claude/scheduled_tasks.lock
+.claude/worktrees/
