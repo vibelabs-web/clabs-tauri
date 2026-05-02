@@ -1,11 +1,15 @@
+#[cfg(unix)]
 use super::response_collector::ResponseCollector;
 use crate::pty::PtyPoolManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
+#[cfg(unix)]
 #[derive(Deserialize)]
 struct Request {
     id: String,
@@ -22,6 +26,7 @@ struct Request {
     cmux_target: Option<String>,  // for cmux send
 }
 
+#[cfg(unix)]
 #[derive(Serialize)]
 struct Response {
     id: String,
@@ -32,6 +37,7 @@ struct Response {
     error: Option<String>,
 }
 
+#[cfg(unix)]
 impl Response {
     fn success(id: String, data: serde_json::Value) -> Self {
         Self { id, ok: true, data: Some(data), error: None }
@@ -42,6 +48,7 @@ impl Response {
     }
 }
 
+#[cfg(unix)]
 #[derive(Clone, Serialize)]
 struct SplitPaneRequest {
     #[serde(rename = "paneId")]
@@ -52,7 +59,18 @@ struct SplitPaneRequest {
 }
 
 
+/// Windows stub — socket server is not yet supported on Windows
+#[cfg(windows)]
+pub async fn run_socket_server(
+    _socket_path: std::path::PathBuf,
+    _pty_pool: Arc<PtyPoolManager>,
+    _app: AppHandle,
+) {
+    log::warn!("Orchestrator socket server is not supported on Windows (Unix sockets required)");
+}
+
 /// Start the Unix socket server for inter-pane orchestration
+#[cfg(unix)]
 pub async fn run_socket_server(
     socket_path: std::path::PathBuf,
     pty_pool: Arc<PtyPoolManager>,
@@ -105,6 +123,7 @@ pub async fn run_socket_server(
     }
 }
 
+#[cfg(unix)]
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     pty_pool: Arc<PtyPoolManager>,
@@ -128,6 +147,7 @@ async fn handle_connection(
     }
 }
 
+#[cfg(unix)]
 /// Resolve pane_id from either pane_id or name field
 fn resolve_pane_id(req: &Request, app: &AppHandle) -> Option<String> {
     // Direct pane_id takes priority
@@ -146,6 +166,7 @@ fn resolve_pane_id(req: &Request, app: &AppHandle) -> Option<String> {
     None
 }
 
+#[cfg(unix)]
 async fn handle_request(
     req: Request,
     pty_pool: &Arc<PtyPoolManager>,
